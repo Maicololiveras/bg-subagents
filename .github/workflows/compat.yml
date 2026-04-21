@@ -46,8 +46,6 @@ jobs:
       - name: Setup pnpm
         if: steps.checkout-opencode.outcome == 'success'
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - name: Setup Node.js
         if: steps.checkout-opencode.outcome == 'success'
