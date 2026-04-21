@@ -1,0 +1,59 @@
+version: 2
+
+updates:
+  # Root workspace
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      root-deps:
+        patterns:
+          - "*"
+    ignore:
+      # zod is pinned EXACT per design decision D6 — only bump on protocol releases
+      - dependency-name: zod
+        update-types:
+          - version-update:semver-major
+
+  # packages/protocol
+  - package-ecosystem: npm
+    directory: "/packages/protocol"
+    schedule:
+      interval: weekly
+    groups:
+      protocol-deps:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: zod
+        update-types:
+          - version-update:semver-major
+
+  # packages/core
+  - package-ecosystem: npm
+    directory: "/packages/core"
+    schedule:
+      interval: weekly
+    groups:
+      core-deps:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: zod
+        update-types:
+          - version-update:semver-major
+
+  # packages/opencode
+  - package-ecosystem: npm
+    directory: "/packages/opencode"
+    schedule:
+      interval: weekly
+    groups:
+      opencode-deps:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: zod
+        update-types:
+          - version-update:semver-major

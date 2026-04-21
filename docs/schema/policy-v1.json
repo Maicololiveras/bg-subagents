@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://maicololiveras.github.io/bg-subagents/schema/policy-v1.json",
+  "title": "PolicyV1",
+  "description": "Runtime policy schema for @maicolextic/bg-subagents-protocol. Controls default modes, security limits, history, and telemetry.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "default_mode_by_agent_type": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "background",
+          "foreground",
+          "ask"
+        ]
+      },
+      "default": {}
+    },
+    "default_mode_by_agent_name": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "background",
+          "foreground",
+          "ask"
+        ]
+      }
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 2000
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "max_concurrent_bg_tasks": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "timeout_per_task_ms": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "blocked_tools_in_bg": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "history": {
+      "type": "object",
+      "properties": {
+        "rotation_size_mb": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 10
+        },
+        "retention_days": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "default": 30
+        }
+      },
+      "additionalProperties": false,
+      "default": {
+        "rotation_size_mb": 10,
+        "retention_days": 30
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "default": {
+        "enabled": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

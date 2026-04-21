@@ -1,0 +1,50 @@
+{
+  "name": "@maicolextic/bg-subagents-opencode",
+  "version": "0.0.0",
+  "private": false,
+  "description": "OpenCode plugin adapter for bg-subagents: registers task_bg, intercepts task, steers via chat.params, delivers completion via Bus + chat.message fallback.",
+  "license": "MIT",
+  "author": "Michael Jimenez <maicoljimenez360@gmail.com>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "import": "./dist/plugin.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@maicolextic/bg-subagents-protocol": "workspace:*",
+    "@maicolextic/bg-subagents-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "typescript": "5.7.3",
+    "vitest": "2.1.8"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

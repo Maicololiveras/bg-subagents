@@ -1,0 +1,52 @@
+{
+  "name": "@maicolextic/bg-subagents-core",
+  "version": "0.0.0",
+  "private": false,
+  "description": "Pure domain core for bg-subagents: policy loader + resolver, picker, task registry, history store. Zero host deps.",
+  "license": "MIT",
+  "author": "Michael Jimenez <maicoljimenez360@gmail.com>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./policy": {
+      "types": "./dist/policy/index.d.ts",
+      "import": "./dist/policy/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@maicolextic/bg-subagents-protocol": "workspace:*",
+    "@clack/prompts": "1.2.0",
+    "jsonc-parser": "3.3.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "typescript": "5.7.3",
+    "vitest": "2.1.8"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

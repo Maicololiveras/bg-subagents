@@ -1,0 +1,75 @@
+name: Compat (Nightly)
+
+on:
+  schedule:
+    # 02:00 UTC every day
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  compat:
+    name: "OpenCode adapter compat (${{ matrix.opencode-ref }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Static 3-cell matrix: HEAD dev branch + two most-recent known tags.
+        # TODO: Replace tag values when anomalyco/opencode publishes newer releases.
+        # Dynamic tag lookup via `gh api repos/anomalyco/opencode/tags` was deferred
+        # because the repo had no published tags at the time this workflow was authored
+        # (2026-04-21). Update v0.1.0/v0.2.0 placeholders once real tags exist.
+        opencode-ref:
+          - dev
+          - v0.1.0
+          - v0.2.0
+
+    steps:
+      - name: Checkout bg-subagents
+        uses: actions/checkout@v4
+
+      - name: Checkout opencode at ref ${{ matrix.opencode-ref }}
+        uses: actions/checkout@v4
+        with:
+          repository: anomalyco/opencode
+          ref: ${{ matrix.opencode-ref }}
+          path: opencode-ref
+        continue-on-error: true
+        id: checkout-opencode
+
+      - name: Warn if opencode ref not found
+        if: steps.checkout-opencode.outcome == 'failure'
+        run: |
+          echo "::warning::opencode ref '${{ matrix.opencode-ref }}' not found — skipping compat cell"
+
+      - name: Setup pnpm
+        if: steps.checkout-opencode.outcome == 'success'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        if: steps.checkout-opencode.outcome == 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.checkout-opencode.outcome == 'success'
+        run: pnpm install --frozen-lockfile
+
+      - name: Run OpenCode adapter tests
+        if: steps.checkout-opencode.outcome == 'success'
+        run: pnpm --filter @maicolextic/bg-subagents-opencode test
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-logs-${{ matrix.opencode-ref }}
+          path: |
+            packages/opencode/test-results/
+            packages/opencode/*.log
+          retention-days: 7

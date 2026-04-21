@@ -1,0 +1,33 @@
+{
+  "name": "bg-subagents-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo for bg-subagents: background subagent plugins for OpenCode, Claude Code, and MCP clients.",
+  "license": "MIT",
+  "author": "Michael Jimenez <maicoljimenez360@gmail.com>",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=9"
+  },
+  "workspaces": [
+    "packages/*",
+    "tooling/*"
+  ],
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "typecheck": "tsc -b --pretty",
+    "changeset": "changeset",
+    "release": "pnpm -r run build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "2.27.9",
+    "@types/node": "22.10.5",
+    "@vitest/coverage-v8": "2.1.8",
+    "typescript": "5.7.3",
+    "vitest": "2.1.8",
+    "zod-to-json-schema": "3.25.2"
+  }
+}
