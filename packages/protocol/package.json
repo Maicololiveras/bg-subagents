@@ -1,6 +1,6 @@
 {
   "name": "@maicolextic/bg-subagents-protocol",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": false,
   "description": "Zero-dep contract package: types, zod schemas, and PROTOCOL_VERSION for the bg-subagents plugin ecosystem.",
   "license": "MIT",
