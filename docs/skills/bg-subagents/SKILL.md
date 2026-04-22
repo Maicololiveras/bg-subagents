@@ -45,7 +45,7 @@ Run "subagent:researcher" in:
 5. **Foreground** selection passes the call through unchanged.
 6. **Esc / cancel** → task is rejected; no fiber is spawned.
 
-Completion is delivered via the `bg-subagents/task-complete` bus event, or — after a 250 ms ack-timeout — via a synthetic assistant message prefixed with `[tsk_<id> ✓]`.
+Completion is delivered via the `bg-subagents/task-complete` bus event, or — after a 2000 ms ack-timeout — via a synthetic assistant message prefixed with `[tsk_<id> ✓]`.
 
 ### Policy configuration
 
@@ -66,15 +66,14 @@ Create `~/.config/bg-subagents/policy.jsonc` to set per-agent defaults so the pi
     "subagent": "ask"
   },
 
-  // Global fallback when no name/type rule matches
-  "global_default_mode": "ask",
-
   // Picker timeout in ms (default: 2000)
   "timeout_ms": 3000
 }
 ```
 
-If `policy.jsonc` is absent, the global default is `ask` — the picker always appears.
+When no `by_agent_name` or `by_agent_type` rule matches, the picker is shown — this is the implicit `"ask"` fallback hardcoded in the adapter, not a configurable global field. There is no `global_default_mode` key in the schema.
+
+If `policy.jsonc` is absent, the same implicit fallback applies — the picker always appears.
 
 ### `/task` command reference
 
@@ -166,12 +165,11 @@ Minimal working example:
 ```jsonc
 {
   "$schema": "https://maicololiveras.github.io/bg-subagents/schema/policy-v1.json",
-  "global_default_mode": "ask",
   "timeout_ms": 2000
 }
 ```
 
-All fields are optional. Omitting the file entirely uses the built-in defaults (`global_default_mode: "ask"`, `timeout_ms: 2000`).
+All fields are optional. Omitting the file entirely uses the built-in defaults (`timeout_ms: 2000`; implicit `"ask"` fallback for unmatched agents).
 
 ---
 

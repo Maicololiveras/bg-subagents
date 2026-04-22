@@ -8,7 +8,7 @@
  *
  * Every cross-boundary cast `as unknown as X` on these types MUST carry the
  * comment:
- *     // OpenCode host-types boundary — see packages/opencode/NOTES.md
+ *     // OpenCode host-types boundary — see docs/opencode-notes.md
  */
 
 // -----------------------------------------------------------------------------
