@@ -79,6 +79,8 @@ See [docs/policy-schema.md](../../docs/policy-schema.md) for every field.
 
 The [root README](../../README.md) covers installation, quickstart, the full `/task` reference, policy sample, troubleshooting, and roadmap.
 
+For the unified skill doc (OpenCode + Claude Code + MCP sections), see [docs/skills/bg-subagents/SKILL.md](../../docs/skills/bg-subagents/SKILL.md).
+
 ## License
 
 MIT.
