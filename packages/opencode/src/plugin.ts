@@ -16,10 +16,14 @@
  * same, re-exported as `BuildServerOverrides`.
  */
 
+import { createLogger } from "@maicolextic/bg-subagents-core";
+
 import {
   buildLegacyHooks,
   type BuildLegacyHooksOverrides,
 } from "./host-compat/legacy/index.js";
+import { buildV14Hooks } from "./host-compat/v14/index.js";
+import { detectHostVersion } from "./host-compat/version-detect.js";
 import type { Hooks, PluginModule, PluginServerContext } from "./types.js";
 
 // -----------------------------------------------------------------------------
@@ -36,12 +40,33 @@ export async function buildServer(
 }
 
 // -----------------------------------------------------------------------------
-// Default PluginModule export
+// Default PluginModule export — routes via detectHostVersion
 // -----------------------------------------------------------------------------
 
 const pluginModule: PluginModule = {
   async server(ctx: PluginServerContext): Promise<Hooks> {
-    return buildServer(ctx);
+    const logger = createLogger({});
+    const version = detectHostVersion(ctx, { logger });
+    if (version === "v14") {
+      logger.info("host-compat:routed", { version });
+      return (await buildV14Hooks(ctx as never, { logger })) as unknown as Hooks;
+    }
+    if (version === "legacy") {
+      logger.info("host-compat:routed", { version });
+      return buildLegacyHooks(ctx);
+    }
+    // Unknown — spec says warn + attempt legacy fallback, then empty hooks.
+    logger.warn("host-compat:unknown-api", {
+      ctx_keys: ctx && typeof ctx === "object" ? Object.keys(ctx) : [],
+    });
+    try {
+      return await buildLegacyHooks(ctx);
+    } catch (err) {
+      logger.warn("host-compat:unknown-legacy-fallback-failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {};
+    }
   },
 };
 

@@ -15,8 +15,8 @@
 export type HostVersion = "v14" | "legacy" | "unknown";
 
 export interface VersionDetectLogger {
-  info?(entry: Record<string, unknown>): void;
-  warn?(entry: Record<string, unknown>): void;
+  info?(msg: string, fields?: Record<string, unknown>): void;
+  warn?(msg: string, fields?: Record<string, unknown>): void;
 }
 
 export interface DetectHostVersionOpts {
@@ -58,8 +58,7 @@ function readForceEnv(
   if (VALID_FORCE_VALUES.has(raw as HostVersion)) {
     return raw as HostVersion;
   }
-  logger?.warn?.({
-    msg: "host-compat:bad-force-value",
+  logger?.warn?.("host-compat:bad-force-value", {
     value: raw,
     allowed: Array.from(VALID_FORCE_VALUES),
   });
@@ -74,7 +73,7 @@ export function detectHostVersion(
 
   const forced = readForceEnv(logger);
   if (forced !== null) {
-    logger?.info?.({ msg: "host-compat:forced", value: forced });
+    logger?.info?.("host-compat:forced", { value: forced });
     return forced;
   }
 

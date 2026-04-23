@@ -117,10 +117,8 @@ describe("detectHostVersion — env override", () => {
     const logger = makeLoggerSpy();
     expect(detectHostVersion(v14Ctx(), { logger })).toBe("legacy");
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({
-        msg: "host-compat:forced",
-        value: "legacy",
-      }),
+      "host-compat:forced",
+      expect.objectContaining({ value: "legacy" }),
     );
   });
 
@@ -129,10 +127,8 @@ describe("detectHostVersion — env override", () => {
     const logger = makeLoggerSpy();
     expect(detectHostVersion(legacyCtx(), { logger })).toBe("v14");
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({
-        msg: "host-compat:forced",
-        value: "v14",
-      }),
+      "host-compat:forced",
+      expect.objectContaining({ value: "v14" }),
     );
   });
 
@@ -141,10 +137,8 @@ describe("detectHostVersion — env override", () => {
     const logger = makeLoggerSpy();
     expect(detectHostVersion(v14Ctx(), { logger })).toBe("v14");
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        msg: "host-compat:bad-force-value",
-        value: "not-a-version",
-      }),
+      "host-compat:bad-force-value",
+      expect.objectContaining({ value: "not-a-version" }),
     );
   });
 
