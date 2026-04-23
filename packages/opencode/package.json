@@ -5,6 +5,11 @@
   "description": "OpenCode plugin adapter for bg-subagents: registers task_bg, intercepts task, steers via chat.params, delivers completion via Bus + chat.message fallback.",
   "license": "MIT",
   "author": "Michael Jimenez <maicoljimenez360@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maicololiveras/bg-subagents.git",
+    "directory": "packages/opencode"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

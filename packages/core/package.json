@@ -5,6 +5,11 @@
   "description": "Pure domain core for bg-subagents: policy loader + resolver, picker, task registry, history store. Zero host deps.",
   "license": "MIT",
   "author": "Michael Jimenez <maicoljimenez360@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maicololiveras/bg-subagents.git",
+    "directory": "packages/core"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
