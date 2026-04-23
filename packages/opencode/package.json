@@ -1,6 +1,6 @@
 {
   "name": "@maicolextic/bg-subagents-opencode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "OpenCode plugin adapter for bg-subagents: registers task_bg, intercepts task, steers via chat.params, delivers completion via Bus + chat.message fallback.",
   "license": "MIT",
