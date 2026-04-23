@@ -27,6 +27,8 @@ import {
 import { runOpenCodeSubagent } from "../../runtime.js";
 import { registerTaskBgToolV14 } from "./tool-register.js";
 import { createV14Delivery } from "./delivery.js";
+import { buildSystemTransform } from "./system-transform.js";
+import { buildV14EventHandler } from "./event-handler.js";
 
 // -----------------------------------------------------------------------------
 // Overrides (test seam)
@@ -73,7 +75,11 @@ export async function buildV14Hooks(
   overrides: BuildV14HooksOverrides = {},
 ): Promise<{
   tool: Record<string, unknown>;
-  event?: (event: { event: unknown }) => Promise<void>;
+  event?: (input: { event: { type: string; properties?: unknown } }) => Promise<void>;
+  "experimental.chat.system.transform"?: (
+    input: { sessionID?: string; model: unknown },
+    output: { system: string[] },
+  ) => Promise<void>;
 }> {
   const logger: Logger = overrides.logger ?? createLogger({});
   const sessionID = overrides.sessionID ?? "session_unknown";
@@ -144,17 +150,36 @@ export async function buildV14Hooks(
     anyRegistry.onComplete(onCompletion);
   }
 
+  // ---------------------------------------------------------------------------
+  // System transform + event hooks (Phase 7)
+  // ---------------------------------------------------------------------------
+  //
+  // task_bg is registered the moment this builder returns, so the guard is
+  // unconditionally true for every session this builder serves. Kept as a
+  // lookup fn to preserve parity with the legacy `chat-params` shape and to
+  // give future work (opt-out flags, per-session gating) a single seam.
+
+  const systemTransform = buildSystemTransform({
+    isTaskBgRegistered: () => true,
+  });
+
+  const eventHandler = buildV14EventHandler({ logger });
+
   logger.info("plugin:booted", {
     host: "v14",
     session_id: sessionID,
     task_bg_registered: true,
     delivery: "v14-prompt-noreply",
+    system_transform: true,
+    event_hook: true,
   });
 
   return {
     tool: {
       task_bg: taskBgTool,
     },
+    event: eventHandler,
+    "experimental.chat.system.transform": systemTransform,
   };
 }
 

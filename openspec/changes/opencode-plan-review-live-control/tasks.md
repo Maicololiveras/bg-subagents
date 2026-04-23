@@ -73,10 +73,11 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 
 ## Phase 7: v14 System + Event Hooks
 
-- [ ] 7.1 **RED: Write test for `system-transform` hook (v14 replacement for `chat.params`)**. Assert the `system: string[]` output is appended with task_bg advertisement when `isTaskBgRegistered` is true. (Files: `packages/opencode/src/__tests__/host-compat/v14/system-transform.test.ts`)
-- [ ] 7.2 **GREEN: Implement `host-compat/v14/system-transform.ts`**. Handler for `experimental.chat.system.transform`. Pushes SYSTEM_ADDENDUM to `output.system` array. (Files: `packages/opencode/src/host-compat/v14/system-transform.ts`)
-- [ ] 7.3 **RED: Write test for v14 `event` hook**. Assert it logs interesting events (session.idle, tool.execute.after for `task_bg`) and ignores others. (Files: `packages/opencode/src/__tests__/host-compat/v14/event-handler.test.ts`)
-- [ ] 7.4 **GREEN: Implement `host-compat/v14/event-handler.ts`**. Read-only consumer of `input.event: Event` union. (Files: `packages/opencode/src/host-compat/v14/event-handler.ts`)
+- [x] 7.1 **RED: Write test for `system-transform` hook (v14 replacement for `chat.params`)**. Assert the `system: string[]` output is appended with task_bg advertisement when `isTaskBgRegistered` is true. (Files: `packages/opencode/src/__tests__/host-compat/v14/system-transform.test.ts`)
+- [x] 7.2 **GREEN: Implement `host-compat/v14/system-transform.ts`**. Handler for `experimental.chat.system.transform`. Pushes SYSTEM_ADDENDUM to `output.system` array. (Files: `packages/opencode/src/host-compat/v14/system-transform.ts`)
+- [x] 7.3 **RED: Write test for v14 `event` hook**. Assert it logs interesting session lifecycle events (session.idle, session.created, session.compacted, session.error) and ignores noise. Scope-amended post-spike: `tool.execute.after` is a separate Hook surface, not an Event — left to later phase if needed. (Files: `packages/opencode/src/__tests__/host-compat/v14/event-handler.test.ts`)
+- [x] 7.4 **GREEN: Implement `host-compat/v14/event-handler.ts`**. Read-only consumer of `input.event: Event` union. (Files: `packages/opencode/src/host-compat/v14/event-handler.ts`)
+- [x] 7.5 **Wire Phase 7 hooks into `buildV14Hooks`**. Return `event` and `experimental.chat.system.transform` alongside `tool`. Extend `build.test.ts` with integration coverage. (Files: `packages/opencode/src/host-compat/v14/index.ts`, `packages/opencode/src/__tests__/host-compat/v14/build.test.ts`)
 
 ---
 

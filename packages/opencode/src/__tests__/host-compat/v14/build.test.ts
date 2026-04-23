@@ -100,3 +100,47 @@ describe("buildV14Hooks — delivery wiring", () => {
     expect(hooks).toBeDefined();
   });
 });
+
+describe("buildV14Hooks — Phase 7 hooks wired", () => {
+  it("returns an `event` hook callable with { event: { type, properties } }", async () => {
+    const input = makeV14Input();
+    const logger = makeLogger();
+    const hooks = await buildV14Hooks(input as never, {
+      logger: logger as never,
+    });
+
+    expect(typeof hooks.event).toBe("function");
+
+    await hooks.event!({
+      event: {
+        type: "session.idle",
+        properties: { sessionID: "sess_v14_1" },
+      },
+    });
+
+    const eventLog = logger.info.mock.calls.find(([msg]) => msg === "v14-event");
+    expect(eventLog).toBeDefined();
+    const meta = eventLog?.[1] as Record<string, unknown> | undefined;
+    expect(meta?.["event_type"]).toBe("session.idle");
+  });
+
+  it("returns an `experimental.chat.system.transform` hook that pushes task_bg addendum", async () => {
+    const input = makeV14Input();
+    const hooks = await buildV14Hooks(input as never);
+
+    const systemTransform = hooks["experimental.chat.system.transform"];
+    expect(typeof systemTransform).toBe("function");
+
+    const output: { system: string[] } = { system: [] };
+    await systemTransform!(
+      {
+        sessionID: "sess_v14_1",
+        model: { providerID: "anthropic", modelID: "claude-opus-4-7" },
+      },
+      output,
+    );
+
+    expect(output.system).toHaveLength(1);
+    expect(output.system[0]).toContain("task_bg");
+  });
+});
