@@ -45,9 +45,11 @@ jobs:
       - name: Generate JSON Schema
         run: node scripts/schema-publish.mjs
 
-      # Upgrade npm so `changeset publish` can use OIDC Trusted Publishing (requires npm >= 11.5.1)
+      # Upgrade npm so `changeset publish` can use OIDC Trusted Publishing (requires npm >= 11.5.1).
+      # --force + --ignore-scripts works around npm self-upgrade MODULE_NOT_FOUND bug
+      # (npm rewrites its own node_modules mid-install and loses dep references).
       - name: Upgrade npm CLI for Trusted Publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11.5.2 --force --ignore-scripts
 
       - uses: changesets/action@v1
         with:
