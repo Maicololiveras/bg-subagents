@@ -1,6 +1,6 @@
 {
   "name": "@maicolextic/bg-subagents-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Pure domain core for bg-subagents: policy loader + resolver, picker, task registry, history store. Zero host deps.",
   "license": "MIT",

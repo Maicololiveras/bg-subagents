@@ -1,5 +1,12 @@
 # @maicolextic/bg-subagents-opencode
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies [03e3d1a]
+  - @maicolextic/bg-subagents-core@0.1.1
+
 ## 0.1.3
 
 ### Patch Changes
