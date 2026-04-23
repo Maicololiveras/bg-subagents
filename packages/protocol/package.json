@@ -5,6 +5,11 @@
   "description": "Zero-dep contract package: types, zod schemas, and PROTOCOL_VERSION for the bg-subagents plugin ecosystem.",
   "license": "MIT",
   "author": "Michael Jimenez <maicoljimenez360@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maicololiveras/bg-subagents.git",
+    "directory": "packages/protocol"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
