@@ -29,7 +29,7 @@ Workflow per spike:
 | ID | Question | Design ADR | Status | Plan B needed? |
 |----|----------|------------|--------|----------------|
 | ZQ-1 | Does OpenCode accept Zod 3 schemas in `ToolDefinition.args`? | ADR-5 | RESOLVED (no spike) — type-level inspection: plugin SDK bundles `zod@4.1.8`. Use `z` re-exported from `@opencode-ai/plugin/tool` instead of our Zod 3. | ADR-5 amended: swap "preserve Zod 3 + shim" for "use plugin's re-exported Zod 4 in packages/opencode". Protocol keeps Zod 3 internally. |
-| EQ-1 | Does `experimental.chat.messages.transform` fire pre-execution with mutable parts? | ADR-2 | ⏳ pending spike run | — |
+| EQ-1 | Does `experimental.chat.messages.transform` fire pre-execution with mutable parts? | ADR-2 | ✅ GO (2026-04-23) — fires per turn, mutation reaches LLM payload, UI shows original user text unchanged. | No — ADR-2 primary path confirmed. |
 | SQ-1 | Does `client.session.abort` cancel in-flight tools (propagate AbortSignal)? | ADR-4 | ⏳ pending spike run | — |
 | DQ-1 | Does `client.session.prompt({noReply:true})` deliver parts without LLM turn? | Phase 6 | ⏳ pending spike run | — |
 | TQ-1 | Does module-level state share between `server` plugin and `tui` plugin? | ADR-3 | ⏳ pending spike run | — |
@@ -85,12 +85,39 @@ be recognized by the runtime's Zod 4 parser.
   transcript? (mutation persisted) — [ ]
 - Did the LLM react to the injected text? (cross-check behaviour) — [ ]
 
-### Verdict
+### Verdict — ✅ GO (2026-04-23)
 
-- Status: ⏳ pending / ✅ GO / ❌ NO-GO
-- If NO-GO → Plan B: fall back to ADR-2's secondary strategy (per-call batching
-  via `tool.execute.before` + delayed release).
-- Notes:
+**Evidence**:
+- Log file `docs/spikes/eq-1-output.log` (17 lines after one "hola" prompt).
+  - `MODULE-LOAD` + `BOOT plugin called` — plugin loaded via auto-discovery of
+    `~/.config/opencode/plugins/spike-messages-transform.ts` (renamed from
+    `.mjs` — auto-discovery matches `.ts` only).
+  - `fire#1 FIRED` → `output.messages.length=1`, user turn with 1 text part,
+    `MUTATION appended text part to msg[0] parts.length before=1 after=2`.
+  - `fire#2` fired a second time after the assistant reply started,
+    with `output.messages.length=2` and assistant parts [step-start, reasoning,
+    tool×3, step-finish].
+  - `CANARY chat.params` fired 3 times — confirms hook system + plugin wiring
+    work end-to-end.
+- UI screenshot: LLM's Thinking says *"user is saying hello, but with some
+  unusual text"* — confirms the mutated text part reached the LLM payload.
+- Bonus finding: `messages.transform` fires MULTIPLE times per turn (pre-LLM
+  + during assistant stream). Each fire sees a fresh `output.messages` —
+  mutations do NOT persist in the session store. This is IDEAL for Plan
+  Review: we inject per-invocation LLM context without corrupting history.
+- UI shows the USER's original text (no mutation leakage to transcript) —
+  consistent UX.
+
+**Implications for ADR-2**:
+- Primary path (`experimental.chat.messages.transform`) is viable.
+- Add a discovery note: the hook fires more than once per turn, so idempotent
+  Plan Review mutation logic is needed (checking markers or using fresh state
+  per fire).
+
+### Plan B reference (kept in case future regression)
+
+If the hook stops firing or mutations stop reaching the LLM: per-call
+batching via `tool.execute.before` + delayed release.
 
 ---
 
