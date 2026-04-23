@@ -94,10 +94,33 @@ export class TaskRegistry {
   readonly #tasks = new Map<TaskId, InternalRecord>();
   readonly #emitter = new EventEmitter();
   readonly #history: Pick<HistoryStore, "append"> | undefined;
+  /**
+   * Task ids whose completion has already been delivered to the main chat.
+   * Used by the delivery layer for single-delivery guarantee — primary and
+   * fallback channels both call {@link markDelivered}; only the first wins.
+   * Separate from task lifecycle state so it survives task gc.
+   */
+  readonly #delivered = new Set<TaskId>();
 
   constructor(opts: TaskRegistryOptions = {}) {
     this.#emitter.setMaxListeners(0);
     this.#history = opts.history;
+  }
+
+  /**
+   * Atomically record that a task's completion has been delivered to the
+   * main chat. Returns `true` the first time it is called for a given id
+   * and `false` on every subsequent call. This enables primary + fallback
+   * delivery paths to race safely — whichever arrives first wins, the
+   * other no-ops.
+   *
+   * Accepts ids that were never spawned (defensive — spec allows this so
+   * synthetic delivery paths don't need to round-trip through `spawn`).
+   */
+  markDelivered(id: TaskId): boolean {
+    if (this.#delivered.has(id)) return false;
+    this.#delivered.add(id);
+    return true;
   }
 
   /** Start a task. Returns immediately; the task runs via the microtask queue. */
