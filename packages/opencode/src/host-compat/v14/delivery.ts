@@ -35,6 +35,15 @@ interface V14DeliveryClient {
 export interface V14DeliveryOpts {
   readonly registry: TaskRegistry;
   readonly client: V14DeliveryClient;
+  /**
+   * Fallback sessionID for tasks whose `meta.session_id` is absent. The
+   * authoritative sessionID is resolved per-task from the spawned task's
+   * meta (set at the tool-register execute-time where the real ToolContext
+   * sessionID is available). This opts-level value is a last-resort fallback
+   * — boot-time placeholders like "session_unknown" should NOT reach the
+   * server, because the v1 SDK endpoint /session/{id}/message returns HTML
+   * for invalid ids and the SDK explodes at JSON.parse.
+   */
   readonly sessionID: string;
   /** Fallback ack timeout in ms (default 2000). */
   readonly ackTimeoutMs?: number;
@@ -63,8 +72,23 @@ function formatCompletionText(event: CompletionEvent): string {
 export function createV14Delivery(
   opts: V14DeliveryOpts,
 ): V14DeliveryCoordinator {
-  const { registry, client, sessionID, logger } = opts;
+  const { registry, client, sessionID: fallbackSessionID, logger } = opts;
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /**
+   * Resolve the sessionID to post into:
+   *   1. Task's `meta.session_id` (set by tool-register at execute time — the
+   *      authoritative real session), OR
+   *   2. `opts.sessionID` (fallback, usually a boot-time placeholder).
+   */
+  function resolveSessionID(taskId: string): string {
+    const state = registry.get(taskId as Parameters<typeof registry.get>[0]);
+    const metaSessionId = state?.meta["session_id"];
+    if (typeof metaSessionId === "string" && metaSessionId.length > 0) {
+      return metaSessionId;
+    }
+    return fallbackSessionID;
+  }
 
   async function onComplete(event: CompletionEvent): Promise<void> {
     const taskId = event.task_id;
@@ -100,8 +124,9 @@ export function createV14Delivery(
     }, opts.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS);
     pending.set(taskId, ackTimer);
 
+    const resolvedSessionID = resolveSessionID(taskId);
     const payload = {
-      path: { id: sessionID },
+      path: { id: resolvedSessionID },
       body: {
         noReply: true,
         parts: [{ type: "text" as const, text: formatCompletionText(event) }],

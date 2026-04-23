@@ -227,6 +227,98 @@ describe("createV14Delivery — primary failure + fallback", () => {
   });
 });
 
+describe("createV14Delivery — dynamic sessionID from task meta (bug fix)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("uses sessionID from registry task meta (not opts.sessionID) when task meta has session_id", async () => {
+    // The plugin boots with a placeholder sessionID ("session_unknown") because
+    // the real session is only known when the tool executes. The delivery
+    // coordinator MUST resolve the real sessionID from the spawned task's
+    // meta, NOT from opts.sessionID. Otherwise client.session.prompt posts to
+    // an invalid session, server returns HTML, SDK explodes at JSON.parse —
+    // which is exactly what happened in the 2026-04-23 smoke test.
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "session_unknown", // BOOT placeholder — must NOT be used
+    });
+
+    const handle = registry.spawn({
+      meta: {
+        tool: "task_bg",
+        subagent_type: "explore",
+        session_id: "ses_REAL_FROM_TOOLCTX",
+      },
+      run: async () => "ok",
+    });
+    await handle.done;
+
+    await coord.onComplete({
+      task_id: handle.id,
+      status: "completed",
+      result: "ok",
+      ts: Date.now(),
+    } as CompletionEvent);
+
+    expect(calls).toHaveLength(1);
+    const payload = calls[0]!.args as { path: { id: string } };
+    expect(payload.path.id).toBe("ses_REAL_FROM_TOOLCTX");
+    expect(payload.path.id).not.toBe("session_unknown");
+  });
+
+  it("falls back to opts.sessionID when task meta has no session_id (backward compat)", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_fallback",
+    });
+
+    // onComplete for a task that is NOT in the registry — e.g. tests that
+    // don't spawn, or legacy path. Must still work using opts.sessionID.
+    await coord.onComplete(mkCompletion("tsk_no_registry"));
+
+    expect(calls).toHaveLength(1);
+    const payload = calls[0]!.args as { path: { id: string } };
+    expect(payload.path.id).toBe("sess_fallback");
+  });
+
+  it("falls back to opts.sessionID when task is in registry but meta lacks session_id", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_legacy_meta",
+    });
+
+    const handle = registry.spawn({
+      meta: { tool: "task_bg" }, // no session_id
+      run: async () => "ok",
+    });
+    await handle.done;
+
+    await coord.onComplete({
+      task_id: handle.id,
+      status: "completed",
+      result: "ok",
+      ts: Date.now(),
+    } as CompletionEvent);
+
+    expect(calls).toHaveLength(1);
+    const payload = calls[0]!.args as { path: { id: string } };
+    expect(payload.path.id).toBe("sess_legacy_meta");
+  });
+});
+
 describe("createV14Delivery — dispose", () => {
   it("exposes a dispose() method that does not throw", () => {
     const registry = new TaskRegistry();
