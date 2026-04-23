@@ -107,6 +107,25 @@ describe("registerTaskBgToolV14 — execute", () => {
     });
   });
 
+  it("passes ctx.sessionID through to spawn.meta.session_id (bug fix — delivery resolves from here)", async () => {
+    const { spawn, instance } = makeRegistryMock();
+    const def = registerTaskBgToolV14({ registry: instance, run: vi.fn() });
+    const ctx = {
+      ...makeToolCtx(),
+      sessionID: "ses_REAL_FROM_EXEC",
+    };
+
+    await def.execute(
+      { subagent_type: "explore", prompt: "test" },
+      ctx,
+    );
+
+    const call = spawn.mock.calls[0]![0] as {
+      meta: Record<string, unknown>;
+    };
+    expect(call.meta["session_id"]).toBe("ses_REAL_FROM_EXEC");
+  });
+
   it("passes description through to spawn.meta when provided", async () => {
     const { spawn, instance } = makeRegistryMock();
     const def = registerTaskBgToolV14({ registry: instance, run: vi.fn() });

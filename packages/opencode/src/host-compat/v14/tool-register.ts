@@ -106,6 +106,10 @@ export function registerTaskBgToolV14(
           tool: "task_bg",
           subagent_type: parsed.subagent_type,
           description: parsed.description ?? null,
+          // Real sessionID captured at execute time — authoritative for
+          // delivery (createV14Delivery resolves sessionID from this meta
+          // field rather than the boot placeholder).
+          session_id: ctx.sessionID,
         },
         run: async (signal: AbortSignal) => run(ctx, parsed, signal),
       });
@@ -118,12 +122,21 @@ export function registerTaskBgToolV14(
       // Swallow fiber failures here — registry handles the settle path.
       handle.done.catch(() => undefined);
 
+      // Compact output — keep the chat transcript clean. Full detail stays
+      // in metadata for downstream consumers (sidebar, /task view, etc.).
+      const describe =
+        parsed.description !== undefined && parsed.description.length > 0
+          ? ` (${parsed.description})`
+          : "";
       return {
-        output: `Background task spawned with id ${handle.id}. Status: running. The subagent will emit a completion event when done.`,
+        output: `Task ${handle.id}${describe} — running in background.`,
         metadata: {
           task_id: handle.id,
           status: "running",
           subagent_type: parsed.subagent_type,
+          ...(parsed.description !== undefined
+            ? { description: parsed.description }
+            : {}),
         },
       };
     },
