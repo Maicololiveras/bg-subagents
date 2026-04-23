@@ -1,5 +1,11 @@
 # @maicolextic/bg-subagents-opencode
 
+## 0.1.1
+
+### Patch Changes
+
+- 4023861: Add unified skill doc and upstream announcement drafts (docs only). Validates CI auto-publish flow with provenance.
+
 ## 0.1.0
 
 ### Minor Changes
