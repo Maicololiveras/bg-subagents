@@ -64,9 +64,10 @@ graduates from stub to complete.
 The PR would add a single file to the gentle-ai skill catalog:
 
 ```
-<!-- TODO: confirm skill catalog path — e.g. skills/bg-subagents/SKILL.md -->
 skills/bg-subagents/SKILL.md
 ```
+
+Proposed path: `skills/bg-subagents/SKILL.md` (adjust to match gentle-ai's existing catalog convention on review).
 
 Source of truth for the file:
 [`docs/skills/bg-subagents/SKILL.md`](https://github.com/Maicololiveras/bg-subagents/blob/main/docs/skills/bg-subagents/SKILL.md)

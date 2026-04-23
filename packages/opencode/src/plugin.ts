@@ -114,7 +114,7 @@ export async function buildServer(
   const hostCtxTyped = buildHostContext(sessionId, {
     opencode_task_bg_registered: true,
   });
-  // OpenCode host-types boundary — see packages/opencode/NOTES.md
+  // OpenCode host-types boundary — see docs/opencode-notes.md
   const hostCtx = hostCtxTyped as unknown as Readonly<Record<string, unknown>>;
 
   // ---------------------------------------------------------------------------

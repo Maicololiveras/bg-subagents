@@ -49,10 +49,9 @@ are explicitly marked "coming soon" so they don't mislead users.
 - **v0.2.0** (ETA TBD): Claude Code adapter via PreToolUse hook; agent-pairing generator; marketplace listing.
 - **v0.3.0** (ETA TBD): MCP server binary; `task_spawn/status/result/kill` tools; grace-period reconnect.
 
-### Screenshots / demo
+### Demo
 
-<!-- TODO: Add terminal recording or screenshot showing the picker in action -->
-<!-- Suggested: `vhs` tape or `asciinema` recording of the 2-second picker -->
+> Terminal recording / screenshot to be attached when the PR is opened.
 
 ### Checklist
 

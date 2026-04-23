@@ -18,7 +18,7 @@ Anywhere we receive an opaque host-provided object (e.g. `ToolContext`,
 carry this sentinel comment exactly:
 
 ```ts
-// OpenCode host-types boundary — see packages/opencode/NOTES.md
+// OpenCode host-types boundary — see docs/opencode-notes.md
 ```
 
 so a future grep pinpoints every cross-module cast.
