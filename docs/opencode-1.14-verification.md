@@ -7,6 +7,23 @@ by running targeted spike scripts against a real OpenCode 1.14.22 install.
 Runtime under test: `opencode-ai@1.14.22` on Windows 11, Bun host.
 Plugin + SDK packages: `@opencode-ai/plugin@1.14.20`, `@opencode-ai/sdk@1.14.20`.
 
+## Execution model
+
+OpenCode 1.14.22 auto-discovers plugins from `~/.config/opencode/plugins/*.{ts,mjs,js}`
+— no need to edit `opencode.json`. Plugins coexist: your existing
+`@maicolextic/bg-subagents-opencode` keeps loading alongside any spike.
+
+Required export shape: the plugin module's default export MUST be a
+`Plugin` function `(input, options?) => Promise<Hooks>` (OR an equivalent
+named export). Object defaults like `{id, server}` are rejected by the
+loader with "Plugin export is not a function".
+
+Workflow per spike:
+1. `cp C:/SDK/bg-subagents/scripts/spike-XX.mjs ~/.config/opencode/plugins/`
+2. Start `opencode`, run the scenario.
+3. `cat C:/SDK/bg-subagents/docs/spikes/XX-output.log`.
+4. `rm ~/.config/opencode/plugins/spike-XX.mjs`.
+
 ## Summary matrix
 
 | ID | Question | Design ADR | Status | Plan B needed? |
@@ -50,12 +67,10 @@ be recognized by the runtime's Zod 4 parser.
 **Script**: `scripts/spike-messages-transform.mjs`
 
 **How to run**:
-1. Back up `~/.config/opencode/opencode.json`.
-2. Temporarily replace the `"plugin"` array with a single entry:
-   `"plugin": ["file:///C:/SDK/bg-subagents/scripts/spike-messages-transform.mjs"]`
-3. Launch `opencode`, open a session, send 2-3 short prompts.
-4. Observe the transcript. Read `docs/spikes/eq-1-output.log`.
-5. Restore the original `opencode.json`.
+1. `cp C:/SDK/bg-subagents/scripts/spike-messages-transform.mjs ~/.config/opencode/plugins/`
+2. Start `opencode`, open a session, send 3 different short prompts.
+3. Observe the transcript. Read `docs/spikes/eq-1-output.log`.
+4. `rm ~/.config/opencode/plugins/spike-messages-transform.mjs`
 
 ### Observations (fill in)
 
@@ -84,13 +99,11 @@ be recognized by the runtime's Zod 4 parser.
 **Script**: `scripts/spike-noreply-prompt.mjs`
 
 **How to run**:
-1. Back up `~/.config/opencode/opencode.json`.
-2. Replace `"plugin"` with:
-   `"plugin": ["file:///C:/SDK/bg-subagents/scripts/spike-noreply-prompt.mjs"]`
-3. Start `opencode`, open a session, send ANY prompt (creates sessionID).
-4. After the reply, ask the agent: _"invoke the spike_dq1 tool"_. Repeat 2-3x.
-5. Observe the UI and read `docs/spikes/dq-1-output.log`.
-6. Restore `opencode.json`.
+1. `cp C:/SDK/bg-subagents/scripts/spike-noreply-prompt.mjs ~/.config/opencode/plugins/`
+2. Start `opencode`, send ANY prompt (creates sessionID).
+3. After the reply, ask the agent: _"invoke the spike_dq1 tool"_. Repeat 2-3x.
+4. Read `docs/spikes/dq-1-output.log`.
+5. `rm ~/.config/opencode/plugins/spike-noreply-prompt.mjs`
 
 ### Observations (fill in)
 
@@ -120,14 +133,12 @@ be recognized by the runtime's Zod 4 parser.
 **Script**: `scripts/spike-session-abort.mjs`
 
 **How to run**:
-1. Back up `~/.config/opencode/opencode.json`.
-2. Replace `"plugin"` with:
-   `"plugin": ["file:///C:/SDK/bg-subagents/scripts/spike-session-abort.mjs"]`
-3. Start `opencode`, ask the agent: _"invoke the spike_slow tool"_.
-4. Expect it to finish in ~3-4s via self-abort. Read
+1. `cp C:/SDK/bg-subagents/scripts/spike-session-abort.mjs ~/.config/opencode/plugins/`
+2. Start `opencode`, ask the agent: _"invoke the spike_slow tool"_.
+3. Expect it to finish in ~3-4s via self-abort. Read
    `docs/spikes/sq-1-output.log`.
-5. Try a follow-up prompt to confirm session still works.
-6. Restore `opencode.json`.
+4. Try a follow-up prompt to confirm session still works.
+5. `rm ~/.config/opencode/plugins/spike-session-abort.mjs`
 
 ### Observations (fill in)
 
@@ -157,18 +168,11 @@ be recognized by the runtime's Zod 4 parser.
 `scripts/spike-tq1/shared-state.mjs`
 
 **How to run**:
-1. Back up `~/.config/opencode/opencode.json`.
-2. Replace `"plugin"` with an array of BOTH entries:
-   ```json
-   "plugin": [
-     "file:///C:/SDK/bg-subagents/scripts/spike-tq1/server.mjs",
-     "file:///C:/SDK/bg-subagents/scripts/spike-tq1/tui.mjs"
-   ]
-   ```
-3. Start `opencode`, open a session, send 3-4 prompts (each fires
+1. `cp -r C:/SDK/bg-subagents/scripts/spike-tq1 ~/.config/opencode/plugins/`
+2. Start `opencode`, open a session, send 3-4 prompts (each fires
    `chat.params` → server increments counter).
-4. Read `docs/spikes/tq-1-output.log`.
-5. Restore `opencode.json`.
+3. Read `docs/spikes/tq-1-output.log`.
+4. `rm -rf ~/.config/opencode/plugins/spike-tq1`
 
 ### Observations (fill in)
 

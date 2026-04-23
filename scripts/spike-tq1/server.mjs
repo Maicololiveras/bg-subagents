@@ -2,19 +2,29 @@
 /**
  * Spike TQ-1 (server half) — shared singleton between server + tui
  *
- * Registers as a PluginModule.server. On boot, logs PID + INIT_TOKEN.
- * On every chat.params hook fire, bumps the shared counter.
+ * Registers as a Plugin function. On every chat.params hook fire, bumps the
+ * shared counter imported from ./shared-state.mjs. Pairs with ./tui.mjs.
  *
- * Pairs with ./tui.mjs which reads the same shared state.
+ * --- How to run (server + tui together) ---
+ * 1. Copy BOTH files into OpenCode's plugin dir:
+ *      cp -r C:/SDK/bg-subagents/scripts/spike-tq1 \
+ *            /c/Users/maicolj/.config/opencode/plugins/
+ *    (That produces .../plugins/spike-tq1/{server,tui,shared-state}.mjs.)
+ * 2. Start opencode, open a session, send 3-4 short prompts.
+ * 3. cat C:/SDK/bg-subagents/docs/spikes/tq-1-output.log
+ * 4. rm -rf /c/Users/maicolj/.config/opencode/plugins/spike-tq1
+ *
+ * Outcomes:
+ *   same PID + same INIT_TOKEN  => shared module instance => GO
+ *   same PID + diff INIT_TOKEN  => separate graph per entry => NO-GO (needs globalThis)
+ *   diff PIDs                   => separate processes => NO-GO (needs IPC)
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import { state, bumpCounter, INIT_TOKEN, INIT_TIME } from "./shared-state.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const LOG_PATH = resolve(__dirname, "..", "..", "docs", "spikes", "tq-1-output.log");
+const LOG_PATH = "C:/SDK/bg-subagents/docs/spikes/tq-1-output.log";
 const MARKER = "[SPIKE-TQ1:server]";
 
 function ensureLogDir() {
@@ -35,26 +45,23 @@ function log(entry) {
 }
 
 log(
-  `MODULE-LOAD pid=${process.pid} INIT_TOKEN=${INIT_TOKEN} INIT_TIME=${INIT_TIME} importMetaUrl=${import.meta.url}`,
+  `MODULE-LOAD pid=${process.pid} INIT_TOKEN=${INIT_TOKEN} INIT_TIME=${INIT_TIME} import.meta.url=${import.meta.url}`,
 );
 
-/** @type {import("@opencode-ai/plugin").PluginModule} */
-const serverPlugin = {
-  id: "spike-tq-1-server",
-  async server(input) {
-    log(
-      `server() called pid=${process.pid} INIT_TOKEN=${INIT_TOKEN} state.counter=${state.counter}`,
-    );
+/** @type {import("@opencode-ai/plugin").Plugin} */
+export const SpikeTq1Server = async (input) => {
+  log(
+    `BOOT plugin called pid=${process.pid} INIT_TOKEN=${INIT_TOKEN} state.counter=${state.counter}`,
+  );
 
-    return {
-      "chat.params": async (hookInput, _hookOutput) => {
-        const c = bumpCounter(`server:chat.params:${hookInput?.sessionID ?? "?"}`);
-        log(
-          `chat.params fired counter now=${c} pid=${process.pid} INIT_TOKEN=${INIT_TOKEN} writes=${state.writes.length}`,
-        );
-      },
-    };
-  },
+  return {
+    "chat.params": async (hookInput, _hookOutput) => {
+      const c = bumpCounter(`server:chat.params:${hookInput?.sessionID ?? "?"}`);
+      log(
+        `chat.params fired counter=${c} pid=${process.pid} INIT_TOKEN=${INIT_TOKEN} writes=${state.writes.length}`,
+      );
+    },
+  };
 };
 
-export default serverPlugin;
+export default SpikeTq1Server;
