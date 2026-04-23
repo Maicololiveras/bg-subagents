@@ -31,7 +31,7 @@ Workflow per spike:
 | ZQ-1 | Does OpenCode accept Zod 3 schemas in `ToolDefinition.args`? | ADR-5 | RESOLVED (no spike) — type-level inspection: plugin SDK bundles `zod@4.1.8`. Use `z` re-exported from `@opencode-ai/plugin/tool` instead of our Zod 3. | ADR-5 amended: swap "preserve Zod 3 + shim" for "use plugin's re-exported Zod 4 in packages/opencode". Protocol keeps Zod 3 internally. |
 | EQ-1 | Does `experimental.chat.messages.transform` fire pre-execution with mutable parts? | ADR-2 | ✅ GO (2026-04-23) — fires per turn, mutation reaches LLM payload, UI shows original user text unchanged. | No — ADR-2 primary path confirmed. |
 | SQ-1 | Does `client.session.abort` cancel in-flight tools (propagate AbortSignal)? | ADR-4 | ⏳ pending spike run | — |
-| DQ-1 | Does `client.session.prompt({noReply:true})` deliver parts without LLM turn? | Phase 6 | ⏳ pending spike run | — |
+| DQ-1 | Does `client.session.prompt({noReply:true})` deliver parts without LLM turn? | Phase 6 | ✅ GO (2026-04-23) — creates user turn in transcript, no auto LLM reply. Requires v1 SDK shape `{path:{id},body:{...}}`. | No — Phase 6 delivery mechanism confirmed. |
 | TQ-1 | Does module-level state share between `server` plugin and `tui` plugin? | ADR-3 | ⏳ pending spike run | — |
 | MQ-1 | Is `messages.transform` consistent across 1.14.x minor versions? | ADR-2 | DEFERRED to Phase 16 manual E2E (covered once plugin is functional in one version). | — |
 
@@ -146,12 +146,42 @@ batching via `tool.execute.before` + delayed release.
   NOT) — [ ]
 - Subsequent prompts still work? — [ ]
 
-### Verdict
+### Verdict — ✅ GO (2026-04-23)
 
-- Status: ⏳ pending / ✅ GO / ❌ NO-GO
-- If NO-GO → Plan B: use `tool.execute.after` + synthetic `chat.message` write
-  via bus (legacy delivery fallback).
-- Notes:
+**Evidence**:
+- First run FAILED with v2 shape `{sessionID, noReply, parts}`. Server
+  received literal `"{id}"` as sessionID because v1 URL template uses
+  `{id}` placeholder, not `{sessionID}`.
+- Fixed payload to v1 shape:
+  `{ path: { id: ctx.sessionID }, body: { noReply: true, parts: [...] } }`.
+  Second run succeeded.
+- Log `docs/spikes/dq-1-output.log` per invocation:
+  - `prompt resolved dt=6ms result.type=object keys=[data,request,response]`
+  - `result.data.info = { id, role: "user", sessionID, time, agent, model }`
+  - `result.data.parts = [{type:"text", text:"[SPIKE-DQ1] synthetic delivery inv#N"}]`
+- UI screenshot: the synthetic payload appears as a **new USER turn** in the
+  transcript. The assistant does NOT auto-reply to the synthetic turn
+  (noReply works). The assistant gave its final reply only after finishing
+  its tool loop.
+
+**Critical finding (amends design)**:
+- `PluginInput.client` is the **v1 SDK client** (imported from
+  `@opencode-ai/sdk` default entry in `@opencode-ai/plugin/index.d.ts`),
+  NOT the v2 client. All plugin-side SDK calls must use v1 shape.
+- If v2 features are needed, construct a v2 client from `input.serverUrl`
+  using `createOpencodeClient` from `@opencode-ai/sdk/v2/client`.
+
+**Implications for design**:
+- Phase 6 (v14 completion delivery) can use v1 `session.prompt` with
+  `noReply:true` — no need for a custom bus workaround.
+- All ADRs referencing `client.session.*` need v1-shape calls OR explicit
+  v2-client construction. Design amendment pending in consolidation.
+
+### Plan B reference (kept for regression)
+
+If noReply behavior changes or synthetic turns cause UX issues: use
+`tool.execute.after` + synthetic `chat.message` write via bus
+(legacy delivery fallback from v0.1.x).
 
 ---
 

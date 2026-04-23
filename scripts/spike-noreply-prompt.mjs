@@ -73,15 +73,22 @@ export const SpikeDq1NoReplyPrompt = async (input) => {
           const invId = `inv#${invocationCount}`;
           log(`${invId} tool invoked ctx.sessionID=${ctx?.sessionID}`);
 
+          // v1 SDK shape: { path: { id }, body: {...} } — NOT flat v2 shape.
+          // PluginInput.client is the v1 client (imported from @opencode-ai/sdk
+          // default entry, not /v2). v1 path placeholder is `{id}` on server;
+          // v2 uses `{sessionID}`. First DQ-1 run failed because we used v2
+          // shape and URL never got interpolated.
           const payload = {
-            sessionID: ctx.sessionID,
-            noReply: true,
-            parts: [
-              {
-                type: "text",
-                text: `${MARKER} synthetic delivery ${invId}`,
-              },
-            ],
+            path: { id: ctx.sessionID },
+            body: {
+              noReply: true,
+              parts: [
+                {
+                  type: "text",
+                  text: `${MARKER} synthetic delivery ${invId}`,
+                },
+              ],
+            },
           };
           log(`${invId} payload=${JSON.stringify(payload)}`);
 

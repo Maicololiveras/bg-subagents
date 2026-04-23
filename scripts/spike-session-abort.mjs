@@ -85,7 +85,11 @@ export const SpikeSq1SessionAbort = async (input) => {
               log(`${invId} SELF-ABORT firing client.session.abort...`);
               selfAbortFired = true;
               try {
-                const res = await client.session.abort({ sessionID });
+                // v1 SDK shape — plugin runtime exposes v1 client
+                // (verified in DQ-1 run: URL placeholder is {id} not {sessionID}).
+                const res = await client.session.abort({
+                  path: { id: sessionID },
+                });
                 log(
                   `${invId} SELF-ABORT resolved res=${JSON.stringify(res).slice(0, 300)}`,
                 );
@@ -119,7 +123,10 @@ export const SpikeSq1SessionAbort = async (input) => {
           const sessionID = ctx?.sessionID;
           log(`HELPER spike_abort_now called sessionID=${sessionID}`);
           try {
-            const res = await client.session.abort({ sessionID });
+            // v1 SDK shape: { path: { id } }
+            const res = await client.session.abort({
+              path: { id: sessionID },
+            });
             log(
               `HELPER abort resolved res=${JSON.stringify(res).slice(0, 300)}`,
             );
