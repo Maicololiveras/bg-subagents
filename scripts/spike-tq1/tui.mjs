@@ -10,7 +10,7 @@
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { state, INIT_TOKEN, INIT_TIME } from "./shared-state.mjs";
+import { state, INIT_TOKEN, INIT_TIME } from "./spike-tq1-shared-state.mjs";
 
 const LOG_PATH = "C:/SDK/bg-subagents/docs/spikes/tq-1-output.log";
 const MARKER = "[SPIKE-TQ1:tui]";

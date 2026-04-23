@@ -32,7 +32,7 @@ Workflow per spike:
 | EQ-1 | Does `experimental.chat.messages.transform` fire pre-execution with mutable parts? | ADR-2 | ✅ GO (2026-04-23) — fires per turn, mutation reaches LLM payload, UI shows original user text unchanged. | No — ADR-2 primary path confirmed. |
 | SQ-1 | Does `client.session.abort` cancel in-flight tools (propagate AbortSignal)? | ADR-4 | ✅ GO (2026-04-23) — `ctx.abort.aborted` propagates ~300ms after abort resolves. Uses v1 shape `{path:{id}}`. | No — ADR-4 confirmed for move-bg. |
 | DQ-1 | Does `client.session.prompt({noReply:true})` deliver parts without LLM turn? | Phase 6 | ✅ GO (2026-04-23) — creates user turn in transcript, no auto LLM reply. Requires v1 SDK shape `{path:{id},body:{...}}`. | No — Phase 6 delivery mechanism confirmed. |
-| TQ-1 | Does module-level state share between `server` plugin and `tui` plugin? | ADR-3 | ⏳ pending spike run | — |
+| TQ-1 | Does module-level state share between `server` plugin and `tui` plugin? | ADR-3 | 🟡 DEFERRED (2026-04-23) — type-level confirmed; TUI plugin loading mechanism unknown (not `~/.config/opencode/plugins/`). Verify in Phase 11. | Plan B ready: `globalThis` + HTTP via `serverUrl` if procs are separate. |
 | MQ-1 | Is `messages.transform` consistent across 1.14.x minor versions? | ADR-2 | DEFERRED to Phase 16 manual E2E (covered once plugin is functional in one version). | — |
 
 Legend: ✅ GO = runtime matches design assumption. ❌ NO-GO = Plan B required.
@@ -277,12 +277,53 @@ Outcome taxonomy:
 - Different PIDs → separate processes → ❌ need IPC (file, socket, or HTTP
   via `serverUrl`).
 
-### Verdict
+### Verdict — 🟡 DEFERRED to Phase 11 (2026-04-23)
 
-- Status: ⏳ pending / ✅ GO / ❌ NO-GO (which flavor above)
-- If NO-GO → Plan B: introduce `SharedPluginState` as an HTTP-backed service
-  co-hosted with the server plugin; TUI polls via the `api.client` URL.
-- Notes:
+**What we confirmed type-level**:
+- `@opencode-ai/plugin` exports both `PluginModule.server: Plugin` and
+  `TuiPluginModule.tui: TuiPlugin`. Fields are mutually exclusive
+  (`tui?: never` on PluginModule, `server?: never` on TuiPluginModule).
+- Subpath `./tui` is explicit in plugin SDK `package.json` exports.
+- ADR-3's "separate package subpath exports" design is structurally
+  supported.
+
+**What failed during runtime attempt**:
+- Dropped `spike-tq1-server.ts`, `spike-tq1-tui.ts`, and
+  `spike-tq1-shared-state.mjs` into `~/.config/opencode/plugins/`.
+- OpenCode crashed at boot: `TypeError: undefined is not an object
+  (evaluating 'f.auth')` — stack trace inside `chunk-xy80fyfc.js`.
+- Root cause hypothesis: auto-discovery at `~/.config/opencode/plugins/`
+  treats every `.ts` file as a SERVER plugin and invokes it with the server
+  signature. Our tui.ts exports a `TuiPlugin` with signature `(api, options,
+  meta) => Promise<void>` — it returns `void`, not a `Hooks` object. The
+  loader then tried to access `returnedValue.auth` and crashed.
+
+**Why we defer instead of chase**:
+- TUI plugin loading is a separate mechanism we haven't fully mapped.
+  `TuiPluginApi.plugins.add(spec)` exists as a runtime registration API
+  (from inside the TUI). There is likely also a config-based path.
+  Investigating this now yaks-shaves away from the main goal.
+- The question TQ-1 answers (shared singleton between server and tui)
+  has robust Plan Bs regardless of the answer.
+- Phase 11 (TUI Plugin shared state) is the natural point to verify end-
+  to-end once we're actively building the TUI plugin.
+
+**Plan Bs (ordered by cost)**:
+1. If server and tui run in the same Node/Bun process: module singleton
+   via `./shared-state.js` Just Works.
+2. If same process but separate module graphs: use `globalThis.
+   SPIKE_TQ1_STATE` (or a namespaced key) for shared state — bypasses
+   module-graph isolation.
+3. If server and tui run in separate processes: HTTP-backed state service
+   co-hosted with server, TUI polls via `api.client` (the TUI already has
+   an OpencodeClient instance).
+
+**Action items for Phase 11**:
+- Step 1: deploy a minimal `tui` plugin via whatever mechanism OpenCode
+  documents (check `opencode` CLI for tui subcommands, inspect
+  `TuiConfigView.plugin` field in SDK config shape).
+- Step 2: probe PID + INIT_TOKEN from both entries; log outcome.
+- Step 3: pick the lowest-cost Plan B that fits the observed outcome.
 
 ---
 
