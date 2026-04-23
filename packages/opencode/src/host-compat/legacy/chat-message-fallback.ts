@@ -12,7 +12,7 @@
  */
 import type { CompletionEvent, Logger, TaskRegistry } from "@maicolextic/bg-subagents-core";
 
-import type { SessionApi } from "../types.js";
+import type { SessionApi } from "../../types.js";
 
 const DEFAULT_ACK_TIMEOUT_MS = 2000;
 

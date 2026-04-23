@@ -43,11 +43,11 @@ import {
 
 import { buildHostContext, clearHostContext } from "./host-context.js";
 import { OpenCodeTaskSwapStrategy } from "./strategies/OpenCodeTaskSwapStrategy.js";
-import { chatMessageFallback } from "./hooks/chat-message-fallback.js";
-import { steerChatParams } from "./hooks/chat-params.js";
-import { wireBusEvents } from "./hooks/event.js";
-import { interceptTaskTool } from "./hooks/tool-before.js";
-import { registerTaskBgTool } from "./hooks/tool-register.js";
+import { chatMessageFallback } from "./host-compat/legacy/chat-message-fallback.js";
+import { steerChatParams } from "./host-compat/legacy/chat-params.js";
+import { wireBusEvents } from "./host-compat/legacy/event.js";
+import { interceptTaskTool } from "./host-compat/legacy/tool-before.js";
+import { registerTaskBgTool } from "./host-compat/legacy/tool-register.js";
 import { runOpenCodeSubagent } from "./runtime.js";
 import type {
   Hooks,

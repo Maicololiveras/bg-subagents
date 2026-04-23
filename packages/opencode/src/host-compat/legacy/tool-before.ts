@@ -35,7 +35,7 @@ import type { Mode } from "@maicolextic/bg-subagents-protocol";
 import type {
   HooksToolBeforeInput,
   HooksToolBeforeResult,
-} from "../types.js";
+} from "../../types.js";
 
 const TASK_TOOL_NAME = "task";
 const TASK_BG_TOOL_NAME = "task_bg";

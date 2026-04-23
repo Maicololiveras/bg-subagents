@@ -5,12 +5,12 @@
  * Placeholder implementation for Batch 6 (adapter wiring). Real streaming +
  * progress delivery is exercised in Batch 7 integration tests with a faked
  * `ctx`. This entry point only has to satisfy the `RunOpenCodeSubagent`
- * contract (see hooks/tool-register.ts):
+ * contract (see host-compat/legacy/tool-register.ts):
  *   - honour the AbortSignal (propagates to `session.prompt` when supported)
  *   - return the payload or throw — the registry captures both.
  */
 import type { ToolContext } from "./types.js";
-import type { TaskBgInput } from "./hooks/tool-register.js";
+import type { TaskBgInput } from "./host-compat/legacy/tool-register.js";
 
 export async function runOpenCodeSubagent(
   ctx: ToolContext,

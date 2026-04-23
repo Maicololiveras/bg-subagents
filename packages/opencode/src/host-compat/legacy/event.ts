@@ -7,7 +7,7 @@
  */
 import type { CompletionEvent, Logger, TaskRegistry } from "@maicolextic/bg-subagents-core";
 
-import type { Bus } from "../types.js";
+import type { Bus } from "../../types.js";
 
 export const TASK_COMPLETE_BUS_EVENT = "bg-subagents/task-complete";
 

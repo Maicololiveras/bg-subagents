@@ -10,8 +10,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { chatMessageFallback } from "../../hooks/chat-message-fallback.js";
-import type { SessionApi } from "../../types.js";
+import { chatMessageFallback } from "../../../host-compat/legacy/chat-message-fallback.js";
+import type { SessionApi } from "../../../types.js";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "bgso-fallback-"));

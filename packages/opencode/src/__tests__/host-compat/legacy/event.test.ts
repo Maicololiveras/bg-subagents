@@ -8,8 +8,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { TASK_COMPLETE_BUS_EVENT, wireBusEvents } from "../../hooks/event.js";
-import type { Bus } from "../../types.js";
+import { TASK_COMPLETE_BUS_EVENT, wireBusEvents } from "../../../host-compat/legacy/event.js";
+import type { Bus } from "../../../types.js";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "bgso-event-"));

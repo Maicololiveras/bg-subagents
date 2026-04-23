@@ -16,8 +16,8 @@ import {
 } from "@maicolextic/bg-subagents-core";
 import type { Mode } from "@maicolextic/bg-subagents-protocol";
 
-import { interceptTaskTool, REENTRY_MARKER } from "../../hooks/tool-before.js";
-import type { HooksToolBeforeInput } from "../../types.js";
+import { interceptTaskTool, REENTRY_MARKER } from "../../../host-compat/legacy/tool-before.js";
+import type { HooksToolBeforeInput } from "../../../types.js";
 
 // -----------------------------------------------------------------------------
 // Fixtures

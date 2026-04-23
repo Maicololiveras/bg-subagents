@@ -10,7 +10,7 @@
  */
 import type { Logger, TaskRegistry } from "@maicolextic/bg-subagents-core";
 
-import type { HookToolDefinition, ToolContext } from "../types.js";
+import type { HookToolDefinition, ToolContext } from "../../types.js";
 
 const TOOL_NAME = "task_bg";
 const TOOL_DESCRIPTION =

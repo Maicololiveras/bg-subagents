@@ -11,7 +11,7 @@ import { join } from "node:path";
 import {
   handleTaskSlashCommand,
   parseTaskCommand,
-} from "../../hooks/task-command.js";
+} from "../../../host-compat/legacy/task-command.js";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "bgso-taskcmd-"));

@@ -5,7 +5,7 @@
  * Guarded by `opencode_task_bg_registered` on the host_context so plugin
  * installations that failed to register `task_bg` don't lie to the model.
  */
-import type { HooksChatParamsInput, HooksChatParamsResult } from "../types.js";
+import type { HooksChatParamsInput, HooksChatParamsResult } from "../../types.js";
 
 const SYSTEM_ADDENDUM = [
   "",

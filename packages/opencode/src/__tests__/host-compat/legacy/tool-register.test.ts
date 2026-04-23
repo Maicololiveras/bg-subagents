@@ -8,8 +8,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { registerTaskBgTool } from "../../hooks/tool-register.js";
-import type { ToolContext } from "../../types.js";
+import { registerTaskBgTool } from "../../../host-compat/legacy/tool-register.js";
+import type { ToolContext } from "../../../types.js";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "bgso-tool-register-"));

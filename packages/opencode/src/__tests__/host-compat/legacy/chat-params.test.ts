@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { SYSTEM_ADDENDUM, steerChatParams } from "../../hooks/chat-params.js";
+import { SYSTEM_ADDENDUM, steerChatParams } from "../../../host-compat/legacy/chat-params.js";
 
 describe("steerChatParams", () => {
   it("returns {} when task_bg is not registered for the session", () => {
