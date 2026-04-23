@@ -6,177 +6,33 @@
  *   const hooks = await mod.server(ctx);
  *
  * The `server(ctx)` function returns a `Hooks` object wired to the live
- * session. We register:
- *   - `tool: [task_bg]`               — new sibling tool
- *   - `tool.execute.before`           — intercepts core `task`
- *   - `chat.params`                   — steers the model toward task_bg
- *   - `event`                         — reserved (consumes external bus events;
- *                                       we also USE ctx.bus.emit to PUBLISH)
- *   - `chat.message` (implicit)       — fallback delivery via session writer
+ * session. Legacy path (OpenCode pre-1.14) is implemented in
+ * `host-compat/legacy/index.ts` as `buildLegacyHooks`. The v14 path will
+ * land in Phase 10 of the opencode-plan-review-live-control change and
+ * route via `detectHostVersion(ctx)`.
  *
- * Completion delivery:
- *   PRIMARY = bus.emit("bg-subagents/task-complete", ...)
- *   FALLBACK = session.writeAssistantMessage after 2000 ms without ack
- *
- * Policy resolver is bootstrapped with the hardcoded defaults — Batch 6 does
- * NOT integrate JSONC policy loading from disk yet (that's deferred to the
- * full-wiring phase). Adapter consumers can pass a custom `resolver` /
- * `picker` / `historyStore` via `buildServer` if they need to.
+ * `buildServer` is kept as a back-compat alias for existing callers and
+ * tests — it delegates to `buildLegacyHooks`. Overrides shape is the
+ * same, re-exported as `BuildServerOverrides`.
  */
+
 import {
-  HARDCODED_DEFAULT_POLICY,
-  HistoryStore,
-  NativeBackgroundStrategy,
-  PolicyResolver,
-  PromptInjectionStrategy,
-  StrategyChain,
-  SubagentSwapStrategy,
-  TaskRegistry,
-  createDefaultPicker,
-  createLogger,
-  resolveHistoryPath,
-  type BackgroundInvoker,
-  type LoadedPolicy,
-  type Logger,
-  type Picker,
-} from "@maicolextic/bg-subagents-core";
-
-import { buildHostContext, clearHostContext } from "./host-context.js";
-import { OpenCodeTaskSwapStrategy } from "./strategies/OpenCodeTaskSwapStrategy.js";
-import { chatMessageFallback } from "./host-compat/legacy/chat-message-fallback.js";
-import { steerChatParams } from "./host-compat/legacy/chat-params.js";
-import { wireBusEvents } from "./host-compat/legacy/event.js";
-import { interceptTaskTool } from "./host-compat/legacy/tool-before.js";
-import { registerTaskBgTool } from "./host-compat/legacy/tool-register.js";
-import { runOpenCodeSubagent } from "./runtime.js";
-import type {
-  Hooks,
-  PluginModule,
-  PluginServerContext,
-} from "./types.js";
+  buildLegacyHooks,
+  type BuildLegacyHooksOverrides,
+} from "./host-compat/legacy/index.js";
+import type { Hooks, PluginModule, PluginServerContext } from "./types.js";
 
 // -----------------------------------------------------------------------------
-// Types for dependency-injected construction (test seam)
+// Back-compat re-exports
 // -----------------------------------------------------------------------------
 
-export interface BuildServerOverrides {
-  readonly logger?: Logger;
-  readonly picker?: Picker;
-  readonly invoker?: BackgroundInvoker;
-  readonly resolver?: PolicyResolver;
-  readonly registry?: TaskRegistry;
-  readonly history?: HistoryStore;
-  readonly ackTimeoutMs?: number;
-}
-
-// -----------------------------------------------------------------------------
-// buildServer — the actual work. Exposed so tests can bypass `plugin.server`.
-// -----------------------------------------------------------------------------
+export type BuildServerOverrides = BuildLegacyHooksOverrides;
 
 export async function buildServer(
   ctx: PluginServerContext,
   overrides: BuildServerOverrides = {},
 ): Promise<Hooks> {
-  const logger: Logger = overrides.logger ?? createLogger({});
-  const sessionId = ctx.session_id ?? "session_unknown";
-
-  const history =
-    overrides.history ??
-    new HistoryStore({
-      path: resolveHistoryPath(),
-    });
-
-  const registry =
-    overrides.registry ??
-    new TaskRegistry({ history });
-
-  const picker: Picker = overrides.picker ?? createDefaultPicker({}, {});
-
-  // Strategy chain: OpenCode swap is FIRST so it short-circuits on our host;
-  // the rest are the canonical defaults from core. We construct inline rather
-  // than calling `createDefaultInvoker({ strategies })` because we want the
-  // exact order + zero magic.
-  const invoker: BackgroundInvoker =
-    overrides.invoker ??
-    new StrategyChain([
-      new OpenCodeTaskSwapStrategy(),
-      new NativeBackgroundStrategy(),
-      new SubagentSwapStrategy(),
-      new PromptInjectionStrategy(),
-    ]);
-
-  const resolver = overrides.resolver ?? buildDefaultResolver();
-  await resolver.reload();
-
-  // Mark this session as having `task_bg` available — strategies consult
-  // host_context to decide. The host_context is passed as an opaque record
-  // into the core strategy surface — downcast at the boundary.
-  const hostCtxTyped = buildHostContext(sessionId, {
-    opencode_task_bg_registered: true,
-  });
-  // OpenCode host-types boundary — see docs/opencode-notes.md
-  const hostCtx = hostCtxTyped as unknown as Readonly<Record<string, unknown>>;
-
-  // ---------------------------------------------------------------------------
-  // Hook wiring
-  // ---------------------------------------------------------------------------
-
-  const taskBgTool = registerTaskBgTool({
-    registry,
-    run: (toolCtx, input, signal) => runOpenCodeSubagent(toolCtx, input, signal),
-    logger,
-  });
-
-  const interceptor = interceptTaskTool({
-    picker,
-    resolver,
-    invoker,
-    logger,
-    buildHostContext: () => hostCtx,
-  });
-
-  const chatParams = steerChatParams({
-    isTaskBgRegistered: (sid) => sid === sessionId,
-  });
-
-  // Completion delivery primary + fallback.
-  const fallback = chatMessageFallback({
-    registry,
-    session: ctx.session,
-    sessionId,
-    logger,
-    ...(overrides.ackTimeoutMs !== undefined
-      ? { ackTimeoutMs: overrides.ackTimeoutMs }
-      : {}),
-  });
-
-  wireBusEvents({
-    registry,
-    ...(ctx.bus !== undefined ? { bus: ctx.bus } : {}),
-    logger,
-    onDelivered: (taskId) => fallback.markDelivered(taskId),
-  });
-
-  logger.info("plugin:booted", {
-    session_id: sessionId,
-    task_bg_registered: true,
-    invoker: invoker.name,
-  });
-
-  // Session teardown: drop host_context cache when the session dies. We
-  // don't have a formal "shutdown" hook surface in v0.1; this call is
-  // invoked by `chat.message` fallback unsubscribe OR by consumers that
-  // manage their own lifecycle.
-  void clearHostContext; // referenced to avoid unused-import; real cleanup
-  // will land in Batch 7 where the integration test exercises session end.
-
-  const hooks: Hooks = {
-    tool: [taskBgTool],
-    "tool.execute.before": interceptor,
-    "chat.params": chatParams,
-  };
-
-  return hooks;
+  return buildLegacyHooks(ctx, overrides);
 }
 
 // -----------------------------------------------------------------------------
@@ -190,18 +46,3 @@ const pluginModule: PluginModule = {
 };
 
 export default pluginModule;
-
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
-function buildDefaultResolver(): PolicyResolver {
-  // Wrap HARDCODED_DEFAULT_POLICY in the `LoadedPolicy` shape so the
-  // resolver's contract is satisfied (policy + source + warnings).
-  const loaded: LoadedPolicy = {
-    policy: HARDCODED_DEFAULT_POLICY,
-    source: "default",
-    warnings: [],
-  };
-  return new PolicyResolver(async () => loaded);
-}
