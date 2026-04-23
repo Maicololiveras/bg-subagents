@@ -43,7 +43,17 @@
     "@maicolextic/bg-subagents-protocol": "workspace:*",
     "@maicolextic/bg-subagents-core": "workspace:*"
   },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.0",
+    "@opencode-ai/sdk": ">=1.14.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": { "optional": false },
+    "@opencode-ai/sdk": { "optional": false }
+  },
   "devDependencies": {
+    "@opencode-ai/plugin": "1.14.20",
+    "@opencode-ai/sdk": "1.14.20",
     "@types/node": "22.10.5",
     "typescript": "5.7.3",
     "vitest": "2.1.8"
