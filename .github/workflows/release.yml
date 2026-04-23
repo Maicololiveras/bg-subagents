@@ -45,15 +45,18 @@ jobs:
       - name: Generate JSON Schema
         run: node scripts/schema-publish.mjs
 
-      # Upgrade npm so `changeset publish` can use OIDC Trusted Publishing (requires npm >= 11.5.1).
-      # --force + --ignore-scripts works around npm self-upgrade MODULE_NOT_FOUND bug
-      # (npm rewrites its own node_modules mid-install and loses dep references).
-      - name: Upgrade npm CLI for Trusted Publishing
-        run: npm install -g npm@11.5.2 --force --ignore-scripts
+      # Upgrade pnpm to 10.x for the publish step only. pnpm 10.8+ is required to:
+      # (a) transform `workspace:*` deps to concrete versions before uploading the
+      #     tarball (npm publish does NOT do this, causing EUNSUPPORTEDPROTOCOL on install);
+      # (b) use OIDC Trusted Publishing (added in 10.8).
+      # Install/build/test steps above already ran with pnpm 9.x (from packageManager),
+      # so the lockfile stays consistent.
+      - name: Install pnpm 10 for OIDC-capable publish with workspace transform
+        run: npm install -g pnpm@latest
 
       - uses: changesets/action@v1
         with:
-          publish: npx changeset publish
+          publish: pnpm -r publish --access public --provenance --no-git-checks
           version: pnpm changeset version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
