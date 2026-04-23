@@ -327,18 +327,52 @@ Outcome taxonomy:
 
 ---
 
-## Post-spike consolidation checklist
+## Phase 1 summary (2026-04-23)
 
-When all 4 spikes report ✅ GO:
-- [ ] Amend `design.md` ADR-5 with the Zod 4 finding.
-- [ ] Remove ZQ-1 from open questions (replaced with migration task).
+**Result**: 3 GO + 1 type-level-GO + 1 deferred + 1 deferred-to-Phase-16.
+
+Approach worked: 4 of 6 open questions resolved in a single session via
+targeted spike plugins dropped into `~/.config/opencode/plugins/`.
+Runtime evidence captured in `docs/spikes/*.log`. No NO-GO verdicts —
+ADRs 2, 4, 5, 6 stand as designed (with the shape note below).
+
+**Discoveries that amend the design**:
+1. **Plugin runtime exposes the v1 SDK client**, not v2. All ADRs using
+   `client.session.*` must pass v1 shape `{path:{id}, body:{...}}`, not
+   v2 flat shape. If v2 endpoints are needed, construct a v2 client
+   explicitly from `input.serverUrl`.
+2. **Plugin SDK bundles Zod 4.1.8** — ADR-5's "preserve Zod 3 + shim"
+   Plan B is not needed. Import `z` from `@opencode-ai/plugin/tool`
+   (re-exported) for tool `args`. `packages/protocol` keeps Zod 3 for
+   internal validation.
+3. **`experimental.chat.messages.transform` fires multiple times per
+   turn** with fresh `output.messages` each time — mutations are
+   effectively per-LLM-call and do not persist to session history. Plan
+   Review mutation logic must be idempotent.
+4. **OpenCode plugin default export must be a function** (the `Plugin`
+   type), not a `PluginModule` object. Despite the type's definition,
+   the loader rejects object defaults.
+5. **Plugin auto-discovery matches `.ts` at top-level of
+   `~/.config/opencode/plugins/`**. Not `.mjs`, not recursive into
+   subdirs. Non-plugin files (like shared-state) can stay as `.mjs`
+   without being loaded as plugins.
+6. **TUI plugins load via a separate mechanism** — not the auto-discover
+   dir. Dropping a `TuiPluginModule.tui` file into
+   `~/.config/opencode/plugins/` crashes opencode at boot with
+   `TypeError: undefined is not an object (evaluating 'f.auth')`.
+   Probable loader: `TuiPluginApi.plugins.add(spec)` runtime API and/or
+   a `tui.plugin` config field.
+
+**Post-spike consolidation checklist**:
+- [ ] Amend `design.md` ADR-5: swap "shim" plan for "import Zod from
+      plugin/tool".
+- [ ] Amend `design.md` ADR-2: note mutations fire multiple times per turn;
+      specify idempotency requirement.
+- [ ] Amend `design.md` across ADRs: call out that `PluginInput.client` is
+      v1 shape.
+- [ ] Remove ZQ-1 from open questions (resolved).
 - [ ] Add Phase 5 task: "Import `z` from `@opencode-ai/plugin/tool` in
       packages/opencode; remove direct Zod 3 dep from opencode package".
-- [ ] Commit this file + `scripts/spike-*.mjs` on branch
-      `sdd/opencode-plan-review-live-control`.
-- [ ] Clean up: delete spike scripts after Phase 16 manual E2E passes.
-
-When any spike reports ❌ NO-GO:
-- [ ] Amend `design.md` with the failing ADR's Plan B as primary path.
-- [ ] Re-run the spike to confirm Plan B works.
-- [ ] Update `tasks.md` Phase numbers affected by the ADR swap.
+- [ ] Phase 11 prep: first sub-task is to learn TUI plugin loading
+      mechanism before building the shared-state design.
+- [ ] Clean up spike scripts after Phase 16 manual E2E passes.
