@@ -30,7 +30,7 @@ Workflow per spike:
 |----|----------|------------|--------|----------------|
 | ZQ-1 | Does OpenCode accept Zod 3 schemas in `ToolDefinition.args`? | ADR-5 | RESOLVED (no spike) — type-level inspection: plugin SDK bundles `zod@4.1.8`. Use `z` re-exported from `@opencode-ai/plugin/tool` instead of our Zod 3. | ADR-5 amended: swap "preserve Zod 3 + shim" for "use plugin's re-exported Zod 4 in packages/opencode". Protocol keeps Zod 3 internally. |
 | EQ-1 | Does `experimental.chat.messages.transform` fire pre-execution with mutable parts? | ADR-2 | ✅ GO (2026-04-23) — fires per turn, mutation reaches LLM payload, UI shows original user text unchanged. | No — ADR-2 primary path confirmed. |
-| SQ-1 | Does `client.session.abort` cancel in-flight tools (propagate AbortSignal)? | ADR-4 | ⏳ pending spike run | — |
+| SQ-1 | Does `client.session.abort` cancel in-flight tools (propagate AbortSignal)? | ADR-4 | ✅ GO (2026-04-23) — `ctx.abort.aborted` propagates ~300ms after abort resolves. Uses v1 shape `{path:{id}}`. | No — ADR-4 confirmed for move-bg. |
 | DQ-1 | Does `client.session.prompt({noReply:true})` deliver parts without LLM turn? | Phase 6 | ✅ GO (2026-04-23) — creates user turn in transcript, no auto LLM reply. Requires v1 SDK shape `{path:{id},body:{...}}`. | No — Phase 6 delivery mechanism confirmed. |
 | TQ-1 | Does module-level state share between `server` plugin and `tui` plugin? | ADR-3 | ⏳ pending spike run | — |
 | MQ-1 | Is `messages.transform` consistent across 1.14.x minor versions? | ADR-2 | DEFERRED to Phase 16 manual E2E (covered once plugin is functional in one version). | — |
@@ -209,13 +209,40 @@ If noReply behavior changes or synthetic turns cause UX issues: use
 - Tool exit reason (ctx.abort.aborted=true vs max ticks)? — [ ]
 - Session responsive after abort? — [ ]
 
-### Verdict
+### Verdict — ✅ GO (2026-04-23)
 
-- Status: ⏳ pending / ✅ GO / ❌ NO-GO
-- If NO-GO → Plan B: live-control move-bg uses re-spawn via `task_bg` without
-  attempting cancel of in-flight tool; accepts that the prior tool keeps
-  running until it naturally finishes or session terminates.
-- Notes:
+**Evidence** (`docs/spikes/sq-1-output.log`):
+```
+19:40:40.924  START sessionID=ses_... external=false abort.aborted=false
+19:40:40.926  TICK 1  elapsed=0ms     aborted=false
+19:40:41.944  TICK 2  elapsed=1018ms  aborted=false
+19:40:42.952  TICK 3  elapsed=2026ms  aborted=false
+19:40:42.955  SELF-ABORT firing client.session.abort...
+19:40:43.243  SELF-ABORT resolved res={"data":true,"request":{},"response":{}}
+19:40:44.246  EXIT reason=ctx.abort.aborted=true totalElapsed=3319ms ticks=3
+```
+
+- `client.session.abort({path:{id:sessionID}})` HTTP round-trip = 288ms to
+  resolve; server responds `{data:true}`.
+- `ctx.abort.aborted` flipped to true BETWEEN tick 3 (19:40:42.952) and the
+  loop's next sleep completion (19:40:44.246). So propagation happened
+  within ~1s after the abort resolved.
+- UI showed the tool result as `Tool execution aborted`; agent turn
+  marked `interrupted`. Session recovered cleanly for follow-up prompts.
+- v1 shape `{path:{id}}` is REQUIRED (pre-fix applied after DQ-1 finding).
+
+**Implications for ADR-4 (live-control move-bg)**:
+- `session.abort` can be used to interrupt an in-flight tool, and the tool
+  receives the cancellation signal via its own `ctx.abort: AbortSignal`.
+- Plan: when user presses Ctrl+B to move-to-bg, plugin calls
+  `client.session.abort({path:{id:ctx.sessionID}})`, tool unwinds via its
+  AbortSignal, re-spawns the work via `task_bg` in background.
+
+### Plan B reference (kept for regression)
+
+If abort stops propagating: live-control re-spawns via `task_bg` WITHOUT
+cancelling the running tool; accept the prior tool keeps running until it
+naturally finishes. Suboptimal but functional.
 
 ---
 
