@@ -123,6 +123,17 @@ export class TaskRegistry {
     return true;
   }
 
+  /**
+   * Non-mutating read of delivery state. Returns `true` if a task has
+   * already been delivered, `false` otherwise. Useful as a pre-check
+   * before invoking an expensive delivery path — callers who need a
+   * delivery-is-mine guarantee should call {@link markDelivered}
+   * directly and act on its return value.
+   */
+  isDelivered(id: TaskId): boolean {
+    return this.#delivered.has(id);
+  }
+
   /** Start a task. Returns immediately; the task runs via the microtask queue. */
   spawn<T>(spec: TaskSpec<T>): TaskHandle<T> {
     const id = spec.id ?? generateTaskId();
