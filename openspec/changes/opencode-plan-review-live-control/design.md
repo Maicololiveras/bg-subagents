@@ -53,13 +53,20 @@ Live Control (v14 TUI only) is a separate `TuiPlugin` in `src/tui-plugin/` that 
 - Per-call batching is the battle-tested fallback. If `messages.transform` ever breaks, we enable it via env flag `BG_SUBAGENTS_PLAN_REVIEW=batching`.
 - `chat.message` runs AFTER the LLM's message already includes tool invocations — too late to intercept cleanly.
 
+**Post-spike amendment (EQ-1, 2026-04-23) — CRITICAL idempotency requirement**:
+
+The EQ-1 verification spike on OpenCode 1.14.22 confirmed `messages.transform` fires and mutations reach the LLM payload, BUT also revealed that the hook **fires MULTIPLE times per turn** with a fresh `output.messages` each invocation. Mutations do NOT persist to session history between fires. The `MessagesTransformInterceptor` MUST therefore be **idempotent**: either (a) check for a marker part the interceptor injects on first fire and skip if present, or (b) rebuild the rewrite deterministically from current state each fire. Design choice: marker-based idempotency — inject a hidden `PlanReviewMarker` part on first rewrite, detect-and-return-unchanged on subsequent fires for the same logical batch.
+
 **Implementation shape**:
 ```typescript
 interface PlanInterceptor {
   intercept(parts: Part[]): Promise<{parts: Part[]; decisions: PlanDecision[]}>;
 }
 
-class MessagesTransformInterceptor implements PlanInterceptor { /* v14 primary */ }
+class MessagesTransformInterceptor implements PlanInterceptor {
+  // v14 primary. MUST be idempotent — see ADR-2 post-spike amendment.
+  // Detects PlanReviewMarker part and short-circuits on repeat fires.
+}
 class BatchingBeforeInterceptor implements PlanInterceptor { /* v14 fallback + legacy */ }
 ```
 
@@ -67,7 +74,7 @@ Env flag selects implementation; defaults to `MessagesTransformInterceptor` on v
 
 ### ADR-3: TUI plugin as separate module export (`./tui`)
 
-**Choice**: Ship TUI plugin as `@maicolextic/bg-subagents-opencode/tui` — loaded by user explicitly in `opencode.json`.
+**Choice**: Ship TUI plugin as `@maicolextic/bg-subagents-opencode/tui` — loaded by user explicitly in `opencode.json` (exact config mechanism TBD — see TQ-1 below).
 
 **Alternatives considered**:
 - Bundle TUI plugin into main entry (detect at runtime whether TUI API exists).
@@ -79,48 +86,73 @@ Env flag selects implementation; defaults to `MessagesTransformInterceptor` on v
 - Users on legacy OpenCode just don't include `/tui` in their plugin array; no error. On v14 the user gets both.
 - Separate npm package (third alt) doubles maintenance; we reject.
 
+**Post-spike amendment (TQ-1, 2026-04-23)**: The TUI plugin auto-discovery path is NOT the same as the server plugin path. Dropping a `TuiPluginModule` file into `~/.config/opencode/plugins/` crashes OpenCode at boot. A runtime API `TuiPluginApi.plugins.add(spec)` exists, but the user-facing config mechanism (e.g., a `tuiPlugin` field in `opencode.json`, or a separate TUI plugin dir) is still unknown. **This does NOT invalidate the subpath export choice** — the tarball still ships `./tui` cleanly — but the user-facing docs step "add `@maicolextic/bg-subagents-opencode/tui` to your opencode.json" may need to reference a different config field than server plugins use. Phase 11's first sub-task must map the loader before writing the TUI plugin's entry point.
+
 ### ADR-4: Move-to-background cancels via `session.abort`, not `tool.cancel`
 
-**Choice**: Use `client.session.abort({sessionID})` from the OpenCode SDK v2 for cancelling foreground tasks. `client.tool.cancel` is not exposed in the SDK.
+**Choice**: Use `client.session.abort({ path: { id } })` from the **OpenCode SDK v1** (the client exposed via `PluginInput.client`) for cancelling foreground tasks. `client.tool.cancel` is not exposed in the SDK.
+
+**CRITICAL — SDK version correction (DQ-1, 2026-04-23)**: The plugin runtime's `PluginInput.client` is the **v1 SDK client**, NOT v2. `@opencode-ai/plugin/dist/index.d.ts` imports `createOpencodeClient` from `@opencode-ai/sdk` (DEFAULT entry), which resolves to the v1 `OpencodeClient`. This was discovered empirically when DQ-1's first run failed with `"Invalid string: must start with ses"` — server received literal `{id}` because v1 URL template is `/session/{id}/message` and we had passed v2-shape flat params. **All `client.session.*` calls in this design use v1 shape `{ path: { id }, body: {...}, query?: {...} }` — NOT flat `{ sessionID, ... }`.** If v2 semantics are ever needed (newer experimental endpoints), construct a v2 client explicitly: `import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"; const v2 = createOpencodeClient({ baseUrl: input.serverUrl.toString() })`.
 
 **Alternatives considered**:
-- `client.tool.cancel(callID)` — **does not exist in SDK v2**.
+- `client.tool.cancel(callID)` — **does not exist in either v1 or v2 SDK**.
 - Send a synthetic user message `/task cancel`.
 - Kill the Node child process — too invasive.
 
-**Rationale** (from reading `@opencode-ai/sdk/dist/v2/gen/sdk.gen.d.ts`):
-- `session` methods available: `delete, get, update, children, todo, init, fork, **abort**, unshare, share, diff, summarize, messages, prompt, deleteMessage`.
-- `session.abort({sessionID})` terminates in-flight operations on that session — aggressive but correct for our use case.
+**Rationale** (verified against `@opencode-ai/sdk/dist/gen/sdk.gen.d.ts` — v1 shapes):
+- `session` methods available (v1): `delete, get, update, children, todo, init, fork, **abort**, unshare, share, diff, summarize, messages, prompt, deleteMessage`.
+- `client.session.abort({ path: { id } })` terminates in-flight operations on that session. **SQ-1 spike confirmed** the abort propagates to the plugin's `ctx.abort: AbortSignal` within ~1s on OpenCode 1.14.22.
 - For subagents we spawned in child sessions (via our `runtime.ts` `session.create`), we can abort the child specifically; main session stays alive.
 - If subagent ran in-process without a child session, we cancel via the `AbortSignal` passed to `runOpenCodeSubagent` (pre-existing path in `runtime.ts`).
 
 **Resulting move-bg flow**:
 ```
 1. TaskRegistry.get(taskID).abort()  // signals AbortController
-2. client.session.abort({sessionID: childSessionID}) // if child session exists
+2. client.session.abort({ path: { id: childSessionID } }) // if child session exists — v1 shape
 3. Wait up to 3000ms for task to enter `cancelled` state
-4. client.session.prompt({sessionID: mainSessionID, prompt: "", agent: "task_bg", tools: {task_bg: true}, system: `/inline-invoke task_bg({subagent_type: X, prompt: Y})`})
-   // This triggers task_bg invocation in the main session; LLM won't generate new text
+4. client.session.prompt({
+     path: { id: mainSessionID },
+     body: {
+       noReply: true,
+       parts: [{ type: "text", text: "<synthetic task_bg invocation>" }]
+     }
+   })
+   // DQ-1 confirmed: creates a user turn visible in transcript, does NOT trigger auto LLM reply.
 5. Toast: "Task moved to background. ID: <new>. Progress lost. /task list"
 ```
 
-Open question (see below): exact mechanism for step 4 (synthetic tool invocation without LLM round-trip) needs verification.
+**DQ-1 resolution**: `client.session.prompt({ path: { id }, body: { noReply: true, parts: [...] } })` is the verified mechanism for step 4. Timing caveat: if the LLM is mid-turn when `noReply:true` fires, the synthetic user turn lands in the transcript and may become the "last user message" — Plan Review + move-bg must choose whether synthetic deliveries land pre-LLM or post-LLM consistently.
 
-### ADR-5: Zod version compatibility (3 → 4-beta bridge)
+### ADR-5: Zod 4 for v14 tool registration, Zod 3 for internal protocol
 
-**Choice**: Keep `zod@3.25.76` as our dep. Expose tool definitions in BOTH shapes from a shared schema source using `zod-to-json-schema` (legacy JSON Schema) and a small wrapper for the new Zod input shape.
+**Choice** (REVISED post-spike, 2026-04-23 — ZQ-1): Import `z` directly from `@opencode-ai/plugin/tool` (which re-exports the bundled **Zod 4.1.8**) for v14 tool registration in `packages/opencode/src/host-compat/v14/`. Keep `zod@3.25.76` in `packages/protocol` for internal contract validation. No shim, no conversion layer, no third Zod install.
+
+**Original choice (SUPERSEDED)**: "Keep zod@3 + zod-to-json-schema bridge. Publish a Zod 4 shim package if runtime rejected Zod 3 shapes." This plan assumed we had to avoid Zod 4 ourselves. ZQ-1 confirmed the plugin SDK already bundles Zod 4.
 
 **Alternatives considered**:
-- Upgrade protocol package to `zod@4-beta` — risky (beta, affects all consumers).
-- Use `zod@3` at runtime and pray OpenCode accepts — the 1.14 types reject Zod 3 shapes at compile time.
-- Ship bundled `zod@4-beta` just for the tool-register layer — bundle bloat.
+- Upgrade `packages/protocol` to Zod 4 — breaks all consumers of `@maicolextic/bg-subagents-protocol@1.0.0`; unnecessary when v14-only code can import Zod 4 from the plugin SDK instead.
+- Install `zod@4` in `packages/opencode` — redundant with the bundled version; risks version drift between our install and the SDK's bundle.
+- Keep the shim bridge — unnecessary complexity now that Zod 4 ships inside the plugin SDK.
 
 **Rationale**:
-- The v14 `ToolDefinition.args` is typed as `z.ZodRawShape` (from Zod). But at runtime, any object matching the shape works (structural). If OpenCode uses `parseAsync` internally, Zod 3 shapes should work too (Zod 3 shapes are compatible with Zod 4 for basic primitives, arrays, objects).
-- Approach: write our `task_bg` tool schema once in Zod 3, export it as-is for v14, convert to JSON Schema for legacy via `zod-to-json-schema`.
-- If Zod 3 shapes are rejected at runtime by OpenCode, fall back to Plan B: publish a tiny `@maicolextic/bg-subagents-opencode-zod4-shim` bridge package (isolates the breaking change).
+- `@opencode-ai/plugin/tool` bundles and re-exports Zod 4.1.8 as part of its public surface. Importing from there guarantees shape compatibility with the host's `ToolDefinition.args` validation regardless of what's installed in our node_modules.
+- `packages/protocol` has zero OpenCode coupling — its Zod 3 schemas validate `bg-subagents` internal contracts (TaskDefinition, ProgressEvent, CompletionEvent). Keeping Zod 3 there preserves compatibility with any external consumer of `@maicolextic/bg-subagents-protocol`.
+- Legacy (`host-compat/legacy/`) continues to use `zod-to-json-schema` for its existing JSON Schema tool registration path. No change there.
+- Dependency discipline: `packages/opencode` declares `@opencode-ai/plugin` as a peer/dev dep but does NOT declare `zod` — the Zod instance comes transitively through the plugin SDK import.
 
-**We MUST verify** (design risk): Test Zod 3 schema in actual OpenCode 1.14.21 boot. If it registers without error and the LLM can call `task_bg` with correct args, Plan A works. This is part of the `sdd-tasks` verification batch.
+**Implementation**:
+```typescript
+// packages/opencode/src/host-compat/v14/tool-register.ts
+import { z } from "@opencode-ai/plugin/tool"; // Zod 4 bundled
+
+export const taskBgArgs = z.object({
+  subagent_type: z.string(),
+  prompt: z.string(),
+  // ...
+});
+```
+
+**ZQ-1 resolution**: Confirmed at type level that `@opencode-ai/plugin/tool` re-exports Zod 4, and `packages/opencode` compiles cleanly against it. No runtime failure path remaining for Zod shape — the original risk is eliminated by using the SDK's own bundled instance.
 
 ### ADR-6: Code organization — `host-compat/{legacy,v14}/` subdirs
 
@@ -246,10 +278,17 @@ BG task transitions to "completed"
 ┌─────────────────────────────────────┐
 │  DeliveryCoordinator (v14)          │
 │  ┌─────────────────────────────┐    │
-│  │ PRIMARY:                    │    │
-│  │ client.session.message      │    │
-│  │ .create({sessionID, role:   │    │
-│  │ "assistant", content})      │    │
+│  │ PRIMARY (v1 SDK shape):     │    │
+│  │ client.session.prompt({     │    │
+│  │   path: { id: sessionID },  │    │
+│  │   body: {                   │    │
+│  │     noReply: true,          │    │
+│  │     parts: [{               │    │
+│  │       type: "text",         │    │
+│  │       text: completionMsg   │    │
+│  │     }]                      │    │
+│  │   }                         │    │
+│  │ })                          │    │
 │  └─────────────────────────────┘    │
 │                                     │
 │  On Promise resolve:                │
@@ -259,14 +298,14 @@ BG task transitions to "completed"
 │  On Promise reject OR timeout:      │
 │  ┌─────────────────────────────┐    │
 │  │ FALLBACK (after 2000ms):    │    │
-│  │ client.session.prompt({     │    │
-│  │   sessionID,                │    │
-│  │   prompt: synthetic msg,    │    │
-│  │   noReply: true             │    │
-│  │ })                          │    │
+│  │ retry client.session.prompt │    │
+│  │ with same v1 shape (diff    │    │
+│  │ markDelivered guard)        │    │
 │  └─────────────────────────────┘    │
 └─────────────────────────────────────┘
 ```
+
+**Amendment (DQ-1, 2026-04-23)**: Primary delivery is now `client.session.prompt({ path: { id }, body: { noReply: true, parts: [...] } })` — v1 SDK shape, verified live on OpenCode 1.14.22. The earlier design referenced `client.session.message.create(...)` as primary; that method exists on v2 but NOT v1, and the plugin runtime gives us v1. Both primary and fallback now use the same method with the same shape — dedupe via `registry.markDelivered(id)` is unchanged.
 
 ### Completion Delivery (legacy)
 
@@ -495,16 +534,32 @@ No phased rollout needed (no user data migration).
 
 ---
 
+## Plugin Loader Contract (post-spike, 2026-04-23)
+
+Three non-obvious rules from the OpenCode 1.14.22 plugin loader, discovered during Phase 1 spikes. Any new plugin file in this package MUST honor them:
+
+1. **Default export must be a FUNCTION (the `Plugin` type), not a `PluginModule` object.** Despite `@opencode-ai/plugin` exporting both types, the loader rejects object-shaped default exports with `"Plugin export is not a function"`. Reference pattern: `~/.config/opencode/plugins/engram.ts` uses `export const Engram: Plugin = (input) => { ... }` and loads fine. Anti-pattern: `export default { id, server }` fails.
+
+2. **Auto-discovery matches `.ts` ONLY, top-level ONLY** at `~/.config/opencode/plugins/`. Not `.mjs`, not `.js`, not recursive. Helper files and spike scripts in that directory that are NOT plugins MUST use a `.mjs` extension to avoid being mis-loaded as plugins on every boot.
+
+3. **TUI plugins use a SEPARATE loader** — NOT the main plugin dir. Dropping a `TuiPlugin` file into `~/.config/opencode/plugins/` crashes OpenCode at boot (`TypeError: undefined is not an object (evaluating 'f.auth')`). A runtime API `TuiPluginApi.plugins.add(spec)` exists; the config-based TUI loading path is still unknown and deferred to Phase 11 (TQ-1). Implication for ADR-3: the `./tui` subpath export alone is not sufficient — we also need to document the user-facing registration step once Phase 11 identifies the mechanism.
+
+These rules are invariants for the plugin and for any spike scripts we deploy during development.
+
+---
+
 ## Open Questions
 
-- [ ] **ZQ-1: Does OpenCode 1.14.21 accept Zod 3 schemas in `ToolDefinition.args`?** Needs runtime verification during `sdd-apply` (tasks phase). If no, fall back to Plan B (Zod 4-beta shim package).
-- [ ] **EQ-1: Is `experimental.chat.messages.transform` semantically suitable?** Need to verify: (a) it fires BEFORE tools execute, (b) mutating `output.messages.parts` replaces the pre-execution call, (c) we can add/remove parts (not just modify). Test during `sdd-apply` batch 3. If not, enable batching fallback permanently.
-- [ ] **SQ-1: Does `client.session.abort({sessionID})` truly cancel in-flight tool calls, or only prompt streaming?** Test in move-bg implementation. If only streaming, pair with `AbortSignal` propagation from `runOpenCodeSubagent`.
-- [ ] **DQ-1: What's the exact mechanism for dispatching a synthetic tool invocation via `client.session.prompt({noReply: true})`?** Need to verify OpenCode accepts this pattern or whether we need a different approach (e.g., direct registry spawn without going through LLM).
-- [ ] **TQ-1: Can `TuiPlugin` and server `Plugin` share state via module-level singleton safely?** Both run in the same Node process but might have different module resolutions (main entry vs `/tui` subpath). Verify both resolve to the same instance.
-- [ ] **MQ-1: Does OpenCode support `experimental.chat.messages.transform` consistently across 1.14.20 and 1.14.21?** Minor versions may differ. We'll test against 1.14.21 (user's version) first and handle older minor versions as bug reports later.
+All spike-gated questions resolved during Phase 1 (2026-04-23). Two defer to later phases.
 
-**None of these BLOCK starting tasks/apply** — each has a documented Plan B. sdd-tasks should schedule verification early in the batch plan.
+- [x] **ZQ-1 RESOLVED (GO, 2026-04-23)** — Plugin SDK bundles Zod 4.1.8 at `@opencode-ai/plugin/tool`. No shim needed. Original plan (zod@3 + conversion layer) superseded; see ADR-5.
+- [x] **EQ-1 RESOLVED (GO, 2026-04-23, commit b061006)** — `experimental.chat.messages.transform` fires per-turn and mutations reach the LLM payload (LLM Thinking confirmed mutated text was received; UI shows original). Caveat: hook fires **multiple times per turn with fresh `output.messages`**; mutations do NOT persist to session history. ADR-2 amended with idempotency requirement.
+- [x] **SQ-1 RESOLVED (GO, 2026-04-23, commit 0258072)** — `client.session.abort({ path: { id } })` propagates to the plugin's `ctx.abort: AbortSignal` within ~1s on OpenCode 1.14.22. v1 SDK shape required.
+- [x] **DQ-1 RESOLVED (GO, 2026-04-23, commit 2ffe45c)** — `client.session.prompt({ path: { id }, body: { noReply: true, parts: [...] } })` creates a user turn in the session transcript **without triggering an auto assistant reply**. Requires v1 SDK shape (NOT flat `{ sessionID }`). See ADR-4 amendment for the critical v1-vs-v2 note.
+- [ ] **TQ-1 DEFERRED to Phase 11** — TUI plugin config loading path is unknown. Auto-discovery dir crashes at boot for TUI files. Type-level confirmed (`PluginModule` / `TuiPluginModule` are exclusive shapes; `./tui` subpath exists). Three Plan Bs documented in `docs/opencode-1.14-verification.md`. Phase 11's first sub-task: map the TUI loader (inspect `TuiConfigView.plugin`, `opencode` CLI tui subcommands) before picking a Plan B.
+- [ ] **MQ-1 DEFERRED to Phase 16 manual E2E** — cross-minor consistency (1.14.20 ↔ 1.14.22) validated during manual end-to-end gating before release.
+
+**Spike evidence**: per-spike verdicts + discoveries consolidated in `docs/opencode-1.14-verification.md`. Per-spike logs at `docs/spikes/{eq,dq,sq,tq}-1-output.log` (gitignored).
 
 ---
 
