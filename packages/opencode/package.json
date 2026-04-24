@@ -21,6 +21,10 @@
     "./plugin": {
       "types": "./dist/plugin.d.ts",
       "import": "./dist/plugin.js"
+    },
+    "./tui": {
+      "types": "./dist/tui-plugin/index.d.ts",
+      "import": "./dist/tui-plugin/index.js"
     }
   },
   "files": [
