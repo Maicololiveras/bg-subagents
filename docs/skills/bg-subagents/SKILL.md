@@ -1,194 +1,148 @@
+---
+name: bg-subagents-opencode
+description: >
+  Background vs foreground sub-agent execution for OpenCode.
+  Trigger: When delegating sub-agents and you need non-blocking
+  task execution with TUI integration.
+license: MIT
+metadata:
+  author: maicolextic
+  version: "1.0"
+---
+
 # bg-subagents
 
-Background vs foreground subagent execution — user picks per invocation, policy drives the default.
+Background vs foreground subagent execution — PolicyResolver drives the default per agent, with TUI integration for interactive plan review.
 
 ## OpenCode
 
-Full usage guide for the shipped v0.1 adapter (`@maicolextic/bg-subagents-opencode`).
+Full usage guide for `@maicolextic/bg-subagents-opencode` v1.0.
 
 ### Install
 
+**Step 1 — install the package:**
+
 ```bash
-pnpm add @maicolextic/bg-subagents-opencode
-# or
 npm install @maicolextic/bg-subagents-opencode
+# or
+pnpm add @maicolextic/bg-subagents-opencode
 ```
 
-Wire the plugin into `~/.config/opencode/config.json`:
+**Step 2 — wire the server plugin into `~/.config/opencode/opencode.json`:**
 
 ```json
 {
-  "plugins": [
-    "@maicolextic/bg-subagents-opencode"
+  "plugin": ["@maicolextic/bg-subagents-opencode"],
+  "bgSubagents": {
+    "policy": {
+      "sdd-explore":  "background",
+      "sdd-apply":    "foreground",
+      "sdd-verify":   "foreground",
+      "*":            "background"
+    }
+  }
+}
+```
+
+**Step 3 (optional) — wire the TUI plugin into `~/.config/opencode/tui.json`** (requires OpenCode 1.14.23+):
+
+```json
+{
+  "plugin": [
+    {
+      "module": "@maicolextic/bg-subagents-opencode/tui"
+    }
   ]
 }
 ```
 
-The plugin auto-registers on session start. No further setup is required.
+The TUI plugin adds the task sidebar, Ctrl+B/Ctrl+F/↓ keybinds, and the interactive plan-review dialog. The server plugin works independently without it.
 
 ### How it works
 
-When OpenCode is about to call `task` for a subagent, the `tool.execute.before` hook fires:
+When OpenCode runs a multi-agent turn (one or more `task` calls), the `experimental.chat.messages.transform` hook intercepts the message batch before it is sent to the LLM:
 
-1. Policy is resolved for the agent name/type combination.
-2. If the resolved mode is `foreground` → call passes through unchanged.
-3. If the resolved mode is `background` or `ask` → the interactive picker appears:
+1. **PolicyResolver** maps each agent name to a mode (`background` / `foreground`) using the `bgSubagents.policy` config, with `*` as wildcard fallback.
+2. **Foreground** agents: call passes through unchanged — blocks the main conversation until complete.
+3. **Background** agents: call is rewritten to `task_bg`, which returns `{ task_id, status: "running" }` immediately — the main conversation continues unblocked.
+4. If the TUI plugin is loaded, the **plan-review dialog** (`api.ui.DialogSelect`) appears for multi-delegation turns, letting the user override the PolicyResolver decision per-task before the batch is sent.
+5. Completion is delivered via `client.session.message.create` (primary path), with a 2000 ms ack-timeout fallback via `client.session.prompt({ noReply: true })`.
 
-```
-Run "subagent:researcher" in:
-> background
-  foreground
-[2s timeout → foreground]
-```
+### Configuration reference
 
-4. **Background** selection rewrites the call to `task_bg`, which returns `{ task_id, status: "running" }` immediately — your conversation continues unblocked.
-5. **Foreground** selection passes the call through unchanged.
-6. **Esc / cancel** → task is rejected; no fiber is spawned.
+All config lives under the `bgSubagents` key in `~/.config/opencode/opencode.json`.
 
-Completion is delivered via the `bg-subagents/task-complete` bus event, or — after a 2000 ms ack-timeout — via a synthetic assistant message prefixed with `[tsk_<id> ✓]`.
-
-### Policy configuration
-
-Create `~/.config/bg-subagents/policy.jsonc` to set per-agent defaults so the picker pre-selects the right mode or skips it entirely:
-
-```jsonc
+```json
 {
-  "$schema": "https://maicololiveras.github.io/bg-subagents/schema/policy-v1.json",
-
-  // Always background the "researcher" agent without asking
-  "default_mode_by_agent_name": {
-    "researcher": "background",
-    "code-reviewer": "ask"
-  },
-
-  // Default for any agent of type "subagent"
-  "default_mode_by_agent_type": {
-    "subagent": "ask"
-  },
-
-  // Picker timeout in ms (default: 2000)
-  "timeout_ms": 3000
+  "bgSubagents": {
+    "policy": {
+      "<agent_name>": "background" | "foreground",
+      "*":            "background" | "foreground"
+    }
+  }
 }
 ```
 
-When no `by_agent_name` or `by_agent_type` rule matches, the picker is shown — this is the implicit `"ask"` fallback hardcoded in the adapter, not a configurable global field. There is no `global_default_mode` key in the schema.
-
-If `policy.jsonc` is absent, the same implicit fallback applies — the picker always appears.
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `bgSubagents.policy` | `Record<string, "background" \| "foreground">` | `{ "*": "background" }` | Per-agent default mode. Agent name is matched exactly; `"*"` is the wildcard fallback. |
 
 ### `/task` command reference
 
-#### Subcommands
+All commands are intercepted server-side — no TUI plugin required.
+
+#### `/task policy <mode>`
+
+Override the PolicyResolver for the current session.
+
+| Mode | Effect |
+|------|--------|
+| `bg` | Force all agents to background for this session |
+| `fg` | Force all agents to foreground for this session |
+| `default` | Clear the session override; per-agent config resumes |
+
+#### Read commands
 
 | Command | Description |
 |---------|-------------|
 | `/task list` | List all tasks (running + historical). |
 | `/task show <id>` | Full detail for a single task. |
+| `/task logs <id>` | JSONL log lines for a task. |
 | `/task kill <id>` | Abort a running task immediately. |
-| `/task logs <id>` | Stream JSONL log lines for a task. |
+| `/task move-bg <id>` | Move a running foreground task to the background. |
 
-#### Flags
+### TUI keybinds
 
-| Flag | Applies to | Description |
-|------|------------|-------------|
-| `--status=<value>` | `list` | Filter by status: `running`, `completed`, `error`, `killed`, `cancelled`. |
-| `--agent=<name>` | `list` | Substring match on the spawning-agent name. |
-| `--since=<value>` | `list` | Tasks started after an ISO-8601 date or duration (`1h`, `30m`, `7d`). |
-| `--tail=<N>` | `logs` | Show last N lines only. |
-| `--no-color` | all | Suppress ANSI color output. |
+Available when the TUI plugin is loaded via `tui.json`.
 
-### System-prompt steering
+| Keybind | Action |
+|---------|--------|
+| `Ctrl+B` | Focus the most recent background task |
+| `Ctrl+F` | Focus the most recent foreground task |
+| `↓` (down arrow) | Open the task management panel |
 
-The plugin also injects an appendix into the chat system prompt to guide the model toward using `task_bg` when appropriate. No manual configuration is needed — it is wired automatically by the `chat.params` hook.
-
-If you want to tune the steering copy, override the `system_prompt_appendix` field in `policy.jsonc`:
-
-```jsonc
-{
-  "system_prompt_appendix": "When spawning long-running research tasks, prefer task_bg over task."
-}
-```
+The sidebar slot shows a live list of background tasks (status, agent name, elapsed time) with a 1000 ms polling interval.
 
 ### Observability
 
-- **History log**: `~/.config/bg-subagents/history.jsonl` — one JSON line per task event (queued, running, completed, error, killed).
-- **Rotation**: rotated at 10 MB → gzipped as `history.jsonl.<timestamp>.gz`; files older than 30 days are swept automatically.
-- **Commands**: `/task list|show|kill|logs` surface the live registry and history in-session.
+| Resource | Path |
+|----------|------|
+| Log file (POSIX) | `~/.opencode/logs/bg-subagents.log` |
+| Log file (Windows) | `%APPDATA%\opencode\logs\bg-subagents.log` |
+| Override log path | `BG_SUBAGENTS_LOG_FILE` env var |
+
+**Zero stdout guarantee**: the plugin is completely silent to the TUI during normal operation. All diagnostic output routes to the log file. Set `BG_SUBAGENTS_DEBUG=true` to additionally mirror logs to stderr (useful for troubleshooting).
+
+In-session commands surface the live registry — no external log viewer needed for basic task inspection.
 
 ---
 
 ## Claude Code (v0.2 — coming soon)
 
-> **Status**: planned. ETA TBD. Track progress at [github.com/Maicololiveras/bg-subagents](https://github.com/Maicololiveras/bg-subagents).
-
-The v0.2 adapter will ship as a Claude Code marketplace plugin distributed under the `@maicolextic/bg-subagents-claude-code` package.
-
-Key differences from the OpenCode adapter:
-
-- Uses the Claude Code **PreToolUse** hook (`plugin/hooks/hooks.json`) rather than OpenCode's `tool.execute.before`.
-- Ships a **pure ESM `.mjs` bundle** — no unbundled imports, compatible with Claude Code's plugin loader.
-- Includes an **agent-pairing generator**: `/bg-subagents pair <dir>` reads a source agent markdown file and emits `<name>-bg.md` + `<name>-fg.md` into `agents/_generated/`, enabling the `-bg` / `-fg` naming convention.
-- Feature-detects the Claude Code runtime version to pick the best background invocation strategy (native field → subagent-type swap → prompt injection).
-
-Install and wiring instructions will be published here when v0.2 ships.
+> **Status**: planned. Track progress at [github.com/Maicololiveras/bg-subagents](https://github.com/Maicololiveras/bg-subagents).
 
 ---
 
 ## MCP (v0.3 — coming soon)
 
-> **Status**: planned. ETA TBD. Track progress at [github.com/Maicololiveras/bg-subagents](https://github.com/Maicololiveras/bg-subagents).
-
-The v0.3 adapter exposes a standalone **MCP server binary** (`bg-subagents-mcp`) that any MCP-compatible host can connect to.
-
-Exposed MCP tools:
-
-| Tool | Description |
-|------|-------------|
-| `task_spawn` | Spawn a background task; returns `{ task_id }` immediately. |
-| `task_status` | Poll status, partial result, and progress for a task. |
-| `task_result` | Block until the task reaches a terminal state and return the full result. |
-| `task_kill` | Abort a running task and return `{ cancelled: true }`. |
-
-Grace-period reconnect: if the MCP client disconnects, the server waits 60 seconds (configurable via `policy.jsonc` under `mcp.grace_period_ms`) before killing running tasks. Reconnecting within the window resumes the session without data loss.
-
-Install and wiring instructions will be published here when v0.3 ships.
-
----
-
-## Policy schema
-
-Full schema reference: [https://maicololiveras.github.io/bg-subagents/schema/policy-v1.json](https://maicololiveras.github.io/bg-subagents/schema/policy-v1.json)
-
-Human-readable documentation: [docs/policy-schema.md](../../docs/policy-schema.md)
-
-Minimal working example:
-
-```jsonc
-{
-  "$schema": "https://maicololiveras.github.io/bg-subagents/schema/policy-v1.json",
-  "timeout_ms": 2000
-}
-```
-
-All fields are optional. Omitting the file entirely uses the built-in defaults (`timeout_ms: 2000`; implicit `"ask"` fallback for unmatched agents).
-
----
-
-## Observability
-
-| Resource | Path |
-|----------|------|
-| History log | `~/.config/bg-subagents/history.jsonl` |
-| Rotated archives | `~/.config/bg-subagents/history.jsonl.<timestamp>.gz` |
-| Per-task logs | `~/.config/bg-subagents/logs/<task_id>.jsonl` |
-
-In-session commands:
-
-```
-/task list              # all tasks, all statuses
-/task list --status=running
-/task show tsk_abc12345
-/task kill tsk_abc12345
-/task logs tsk_abc12345 --tail=50
-```
-
-Log level is controlled by the `BG_SUBAGENTS_LOG` environment variable (`error`, `warn`, `info`, `debug`). Default: `warn`.
+> **Status**: planned. Track progress at [github.com/Maicololiveras/bg-subagents](https://github.com/Maicololiveras/bg-subagents).

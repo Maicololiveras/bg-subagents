@@ -23,29 +23,29 @@ export {
   type RunOpenCodeSubagent,
   type TaskBgInput,
   type TaskBgResult,
-} from "./hooks/tool-register.js";
+} from "./host-compat/legacy/tool-register.js";
 
 export {
   interceptTaskTool,
   type InterceptTaskFn,
   type InterceptTaskOpts,
-} from "./hooks/tool-before.js";
+} from "./host-compat/legacy/tool-before.js";
 
-export { steerChatParams, type SteerChatParamsFn, type SteerChatParamsOpts } from "./hooks/chat-params.js";
+export { steerChatParams, type SteerChatParamsFn, type SteerChatParamsOpts } from "./host-compat/legacy/chat-params.js";
 
 export {
   wireBusEvents,
   TASK_COMPLETE_BUS_EVENT,
   type WireBusEventsHandle,
   type WireBusEventsOpts,
-} from "./hooks/event.js";
+} from "./host-compat/legacy/event.js";
 
 export {
   chatMessageFallback,
   DEFAULT_ACK_TIMEOUT_MS,
   type ChatMessageFallbackHandle,
   type ChatMessageFallbackOpts,
-} from "./hooks/chat-message-fallback.js";
+} from "./host-compat/legacy/chat-message-fallback.js";
 
 export {
   handleTaskSlashCommand,
@@ -54,7 +54,7 @@ export {
   type ParsedFlags,
   type TaskCommandDeps,
   type TaskSubcommand,
-} from "./hooks/task-command.js";
+} from "./host-compat/legacy/task-command.js";
 
 export { runOpenCodeSubagent } from "./runtime.js";
 

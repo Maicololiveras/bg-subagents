@@ -48,7 +48,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { buildServer } from "../../plugin.js";
-import { REENTRY_MARKER } from "../../hooks/tool-before.js";
+import { REENTRY_MARKER } from "../../host-compat/legacy/tool-before.js";
 import type { HooksToolBeforeInput } from "../../types.js";
 import { makeFakePluginContext } from "../fixtures/fakePluginContext.js";
 

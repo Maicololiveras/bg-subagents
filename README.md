@@ -3,20 +3,33 @@
 [![CI](https://github.com/Maicololiveras/bg-subagents/actions/workflows/ci.yml/badge.svg)](https://github.com/Maicololiveras/bg-subagents/actions/workflows/ci.yml)
 [![Compat](https://github.com/Maicololiveras/bg-subagents/actions/workflows/compat.yml/badge.svg)](https://github.com/Maicololiveras/bg-subagents/actions/workflows/compat.yml)
 [![npm](https://img.shields.io/npm/v/@maicolextic/bg-subagents-opencode)](https://www.npmjs.com/package/@maicolextic/bg-subagents-opencode)
+[![v1.0 ready](https://img.shields.io/badge/v1.0-ready-brightgreen)](https://github.com/Maicololiveras/bg-subagents/blob/main/docs/migration-v0.1-to-v1.0.md)
 
-Per-invocation background subagent execution for AI coding hosts.
+Per-invocation background subagent execution for AI coding hosts — with a full TUI layer for live task control.
 
-Normal OpenCode subagents block the main conversation until they finish. `bg-subagents` intercepts every `task` call, prompts you to choose between running it in the foreground (default) or background, and — if you choose background — forks the subagent via the new `task_bg` tool. The main conversation continues immediately; completion is delivered back as a bus event (or a synthetic assistant message if the bus is unavailable).
+## Interactive presentation
+
+See the BG vs FG model, 3-level policy cascade, and v1.0 UX in a clickable walkthrough:
+
+**[Open interactive presentation](https://raw.githack.com/Maicololiveras/bg-subagents/main/docs/upstream/presentation/bg-vs-fg-interactive.html)**
+
+Works in any modern browser — no build, no install. Runs locally too: open `docs/upstream/presentation/bg-vs-fg-interactive.html` directly from disk.
+
+`bg-subagents` intercepts every `task` call and routes it background or foreground based on your policy config. No picker required. The main conversation continues immediately; completion is delivered back as a bus event or synthetic assistant message. A sidebar and keyboard shortcuts give you live visibility directly in the OpenCode TUI.
+
+**New in v1.0**: PolicyResolver (policy-driven routing, no picker), `/task move-bg` live control, TUI sidebar + Ctrl+B/F/↓ keybinds, zero-stdout guarantee, 788 tests.
 
 ## Status
 
-**OpenCode adapter v0.1.0 — LIVE on npm.**
+**OpenCode adapter v1.0 — shipping to npm.**
 
 ```
 @maicolextic/bg-subagents-protocol  1.0.0
-@maicolextic/bg-subagents-core      0.1.0
-@maicolextic/bg-subagents-opencode  0.1.0
+@maicolextic/bg-subagents-core      1.0.0
+@maicolextic/bg-subagents-opencode  1.0.0
 ```
+
+Upgrading from v0.1? See the [migration guide](docs/migration-v0.1-to-v1.0.md).
 
 Claude Code adapter (v0.2) and MCP adapter (v0.3) are on the roadmap — not shipped yet.
 
@@ -35,7 +48,9 @@ yarn add @maicolextic/bg-subagents-opencode
 
 ### Wire into OpenCode config
 
-In your `~/.config/opencode/config.json` (or project-local `.opencode/config.json`):
+v1.0 requires **two config file entries** — one for the server plugin, one for the TUI plugin.
+
+**`~/.config/opencode/opencode.json`** (or project-local `opencode.json`):
 
 ```json
 {
@@ -44,6 +59,20 @@ In your `~/.config/opencode/config.json` (or project-local `.opencode/config.jso
   ]
 }
 ```
+
+**`~/.config/opencode/tui.json`** (or project-local `tui.json`) — for sidebar + keybinds:
+
+```json
+{
+  "plugins": [
+    "@maicolextic/bg-subagents-opencode/tui"
+  ]
+}
+```
+
+The server plugin is functional standalone. The TUI entry is optional but recommended for live task visibility.
+
+See [packages/opencode/README.md](packages/opencode/README.md) for the full configuration reference, policy JSONC format, and troubleshooting guide.
 
 OpenCode will call `(await import("@maicolextic/bg-subagents-opencode")).default.server(ctx)` at session start and register the returned hooks automatically.
 
@@ -169,6 +198,19 @@ JSONL logs live at `~/.local/share/bg-subagents/history/` (Linux/Mac) or `%APPDA
 **v0.2 — Claude Code adapter.** Hooks into the Claude Code plugin surface; same picker + invoker stack, same `/task` commands. Protocol stays 1.x; `security.limits` enforcement activates.
 
 **v0.3 — MCP adapter.** Exposes `task_bg` as a native MCP tool, enabling background subagents from any MCP-compatible host. `mcp.grace_period_ms` activates.
+
+## Documentation
+
+| Doc | What it covers |
+|-----|---------------|
+| [packages/opencode/README.md](packages/opencode/README.md) | Full plugin reference: install, config, `/task` commands, policy JSONC, TUI keybinds, troubleshooting |
+| [docs/installation.md](docs/installation.md) | Consolidated installation guide (npm, gentle-ai, local dev, verification, troubleshooting) |
+| [docs/integrations/gentle-ai.md](docs/integrations/gentle-ai.md) | Gentle-AI integration status, mechanism, and upstream PR info |
+| [docs/INDEX.md](docs/INDEX.md) | Full docs index — navigation aid for all docs |
+| [docs/architecture.md](docs/architecture.md) | Component diagram, hook wiring table, data flow, SharedPluginState bridge |
+| [docs/migration-v0.1-to-v1.0.md](docs/migration-v0.1-to-v1.0.md) | Breaking changes from v0.1, upgrade steps, rollback instructions |
+| [docs/policy-schema.md](docs/policy-schema.md) | Full policy JSONC field reference |
+| [docs/release-process.md](docs/release-process.md) | Changesets, publish workflow, versioning |
 
 ## Contributing
 
