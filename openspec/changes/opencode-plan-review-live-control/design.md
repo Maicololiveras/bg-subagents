@@ -2,11 +2,12 @@
 
 ## Technical Approach
 
-Single npm package `@maicolextic/bg-subagents-opencode@1.0.0` with **two module exports** and **runtime-detected compat layer**:
+> **Plan D pivot (2026-04-24, post-spike TQ-1 runtime)**: v1.0 is **server-side only**. The TUI plugin (`./tui` subpath, `Ctrl+B` keybind, sidebar) is **deferred to v1.1**. See ADR-8 for the full decision. The sections below reflect the post-pivot architecture.
+
+Single npm package `@maicolextic/bg-subagents-opencode@1.0.0` with a **single main export** and **runtime-detected compat layer**:
 
 ```
-@maicolextic/bg-subagents-opencode          (main)  → {default: {server, tui?}}
-@maicolextic/bg-subagents-opencode/tui      (sub)   → {default: {tui}}
+@maicolextic/bg-subagents-opencode          (main)  → {default: Plugin}
 ```
 
 Entry `plugin.ts` implements the Plugin Input Protocol of both OpenCode versions. On each session boot:
@@ -16,9 +17,11 @@ Entry `plugin.ts` implements the Plugin Input Protocol of both OpenCode versions
 3. Route to `buildV14Hooks(ctx)` or `buildLegacyHooks(ctx)` accordingly.
 4. Each builder assembles its version-specific `Hooks` record and shares the core domain (`TaskRegistry`, `PolicyResolver`, `Picker`, `StrategyChain`).
 
-Plan Review (v14 only) lives at the **message level** (not per-tool-call) using `experimental.chat.messages.transform`. If the batch detector finds 2+ `task` calls, it shows a picker and rewrites the message parts before the host executes tools. Fallback: per-call batching buffer in `tool.execute.before` if `messages.transform` proves unreliable.
+Plan Review (v14 only) lives at the **message level** (not per-tool-call) using `experimental.chat.messages.transform`. When the hook fires, it iterates over ALL `task` calls in the message (no minimum threshold), performs a **PolicyResolver lookup** per `agent_name` to determine BG/FG mode, then rewrites the message parts before the host executes tools. No interactive picker, no batch threshold, no blocking during the transform. The user controls routing via: (a) per-agent-type default policy in bg-subagents config, and (b) a session-level `/task policy <bg|fg|default>` slash command set BEFORE sending the prompt. Post-spawn moves remain available via `/task move-bg <id>` (Phase 12). Fallback: per-call path in `tool.execute.before` still exists for legacy (pre-1.14) only — not used in the v14 Plan Review flow.
 
-Live Control (v14 TUI only) is a separate `TuiPlugin` in `src/tui-plugin/` that registers the `Ctrl+B` keybind, 5 slash commands, and (optionally) a sidebar slot. Communicates with the server plugin via process-local shared state (module-level singleton `TaskRegistry`).
+> **OQ-1 resolved (2026-04-24)**: Candidate 7 (PolicyResolver defaults + slash override) is the v1.0 primary. Interactive picker (Candidates 1–6) is NOT implemented in v1.0. See "Open Questions (Post-Pivot)" section for full resolution details and the rationale for deferring per-entry control (Candidate 6) to v1.1.
+
+Live Control (v14, server-side) is implemented as **slash command interception** — the server plugin intercepts `/task move-bg <id>` and related commands via the `chat.message` hook (or equivalent server-side message handler). There is no Ctrl+B keybind, no sidebar, and no TUI module in v1.0. These are deferred to v1.1 pending a public OpenCode TUI loader.
 
 ---
 
@@ -38,7 +41,11 @@ Live Control (v14 TUI only) is a separate `TuiPlugin` in `src/tui-plugin/` that 
 - Bundling both codepaths adds ~5KB gzipped — acceptable.
 - Abandoning legacy breaks v0.1.x users on older OpenCode with no upgrade path.
 
-### ADR-2: Plan Review via `experimental.chat.messages.transform` (primary) + per-call batching (fallback)
+### ADR-2: Plan Review via `experimental.chat.messages.transform` (primary) + per-call path (legacy fallback)
+
+> **Post-OQ-1 amendment (2026-04-24)**: The picker step described in the original ADR-2 rationale is removed for v1.0. The flow is now: `messages.transform` fires → iterate all `task` parts → PolicyResolver lookup per agent → rewrite. No user interaction, no batch threshold, no picker invocation. See OQ-1 resolution in "Open Questions (Post-Pivot)" section. The `PlanPicker` interface is removed from the interceptor contract; `InterceptorContext.picker` is dropped. The env flag `BG_SUBAGENTS_PLAN_REVIEW=batching` still selects the legacy per-call fallback for pre-1.14 hosts.
+
+### ADR-2 (original): Plan Review via `experimental.chat.messages.transform` (primary) + per-call batching (fallback)
 
 **Choice**: Use OpenCode 1.14's `experimental.chat.messages.transform` as the primary interception point. Keep a fallback implementation using time-window batching inside `tool.execute.before`.
 
@@ -72,21 +79,67 @@ class BatchingBeforeInterceptor implements PlanInterceptor { /* v14 fallback + l
 
 Env flag selects implementation; defaults to `MessagesTransformInterceptor` on v14.
 
-### ADR-3: TUI plugin as separate module export (`./tui`)
+### ADR-3: TUI plugin as separate module export (`./tui`) — ~~SUPERSEDED~~
 
-**Choice**: Ship TUI plugin as `@maicolextic/bg-subagents-opencode/tui` — loaded by user explicitly in `opencode.json` (exact config mechanism TBD — see TQ-1 below).
+> **STATUS: SUPERSEDED by ADR-8 (2026-04-24, Plan D pivot).**
+> ADR-3 is preserved here as a historical record. Do not implement it in v1.0.
+> Full spike evidence in engram topic `sdd/opencode-plan-review-live-control/spike/tq1-runtime-result`.
+
+**Original choice**: Ship TUI plugin as `@maicolextic/bg-subagents-opencode/tui` — loaded by user explicitly in `opencode.json` (exact config mechanism TBD — see TQ-1 below).
 
 **Alternatives considered**:
 - Bundle TUI plugin into main entry (detect at runtime whether TUI API exists).
 - Separate npm package (`@maicolextic/bg-subagents-opencode-tui`).
 
-**Rationale**:
+**Rationale (original)**:
 - OpenCode's plugin loader distinguishes `{server}` from `{tui}` module shapes and loads them differently. Exporting both from one module doesn't work — the `PluginModule` type explicitly excludes combining them (`tui?: never` on `PluginModule`).
 - A separate subpath export (`"./tui"` in `package.json` `exports`) gives clean separation without a separate npm publish. Both subpaths ship from the same tarball.
 - Users on legacy OpenCode just don't include `/tui` in their plugin array; no error. On v14 the user gets both.
 - Separate npm package (third alt) doubles maintenance; we reject.
 
-**Post-spike amendment (TQ-1, 2026-04-23)**: The TUI plugin auto-discovery path is NOT the same as the server plugin path. Dropping a `TuiPluginModule` file into `~/.config/opencode/plugins/` crashes OpenCode at boot. A runtime API `TuiPluginApi.plugins.add(spec)` exists, but the user-facing config mechanism (e.g., a `tuiPlugin` field in `opencode.json`, or a separate TUI plugin dir) is still unknown. **This does NOT invalidate the subpath export choice** — the tarball still ships `./tui` cleanly — but the user-facing docs step "add `@maicolextic/bg-subagents-opencode/tui` to your opencode.json" may need to reference a different config field than server plugins use. Phase 11's first sub-task must map the loader before writing the TUI plugin's entry point.
+**Post-spike amendment (TQ-1 static, 2026-04-23)**: The TUI plugin auto-discovery path is NOT the same as the server plugin path. Dropping a `TuiPluginModule` file into `~/.config/opencode/plugins/` crashes OpenCode at boot. A runtime API `TuiPluginApi.plugins.add(spec)` exists, but the user-facing config mechanism was still unknown.
+
+**Post-spike amendment (TQ-1 runtime, 2026-04-24) — REFUTATION**: OpenCode 1.14.22's `plugin` array loader rejects `{tui: fn}` default exports with an explicit error: `"must default export an object with server()"`. The module loads, but registration fails. The `./tui` subpath from `@opencode-ai/plugin` has NO external loading mechanism in 1.14.22. This fully refutes the subpath export approach for v1.0. **Decision: pivot to ADR-8.**
+
+### ADR-8: v1.0 is server-side only; TUI plugin deferred to v1.1
+
+**Choice**: v1.0 ships as a single-export server-only plugin. TUI features (Ctrl+B keybind, DialogSelect picker, sidebar slot, `./tui` subpath) are removed from v1.0 scope and deferred to v1.1.
+
+**Rationale**:
+The TQ-1 runtime spike (2026-04-24) proved that OpenCode 1.14.22's plugin loader cannot load a `{tui: fn}` default export — it demands `{server: fn}` or a `Plugin` function, and rejects TUI-shaped modules with an unambiguous error. There is no discovered workaround. Building a TUI plugin surface for v1.0 under these constraints would mean: (a) shipping code that cannot load at runtime, or (b) investing in a speculative config-field research path with no guarantee of finding a public mechanism before the release gate. Neither is acceptable.
+
+**Why defer vs build-anyway**:
+- "Build anyway despite refutation" would require a new spike series to find an alternative TUI registration path, with unknown timeline and no guarantee.
+- Deferring to v1.1 explicitly scopes that research as a dedicated effort once/if OpenCode exposes a public TUI loader (the project is active; a v1.15 or later may add it).
+- Every feature cut from TUI aligns with the `complement-not-redesign` principle: the plugin stops touching the TUI surface entirely in v1.0 — it cooperates with OpenCode's server extension point exclusively, which is confirmed stable.
+
+**What stays (confirmed viable)**:
+- Plan Review via `experimental.chat.messages.transform` (server hook — confirmed GO in EQ-1 spike, Phase 7 shipped, functional in live smoke test).
+- All server-side hooks: `experimental.chat.system.transform`, `event`, `tool` registration (Zod 4, v14 shape), completion delivery.
+- Full legacy codepath (unchanged).
+
+**What changes**:
+- Live Control (`Ctrl+B` → move FG task to BG) is **converted to a slash command**: `/task move-bg <id>`. The server plugin intercepts `/task *` patterns via the `chat.message` hook (or equivalent server-side message handler — exact mechanism is an open question for Phase 8, flagged below). This keeps Live Control functional without any TUI surface.
+- Slash commands `/task list`, `/task show`, `/task logs`, `/task kill`, `/task move-bg` are all server-side intercepted in v1.0 — no `api.command.register` call needed.
+
+**What drops (v1.0)**:
+- `src/tui-plugin/` directory and all its modules (`live-control.ts`, `plan-review-dialog.ts`, `commands.ts`, `sidebar.ts`, `shared-state.ts`, `index.ts`).
+- `./tui` subpath export in `package.json`.
+- `SharedPluginState` singleton (no longer needed — commands go through server).
+- Phase 11 (Shared State), Phase 12.1-2 (TUI DialogSelect), Phase 12.7 (sidebar), Phase 13 (TUI entry point): all dropped.
+- `__tests__/tui-plugin/` test directory: dropped.
+- Ctrl+B keybind: dropped.
+- `BG_SUBAGENTS_TUI=on|off` feature flag: dropped.
+
+**What defers to v1.1**:
+- TUI plugin entirely — pending a public OpenCode TUI loader being discovered or released. Research owner: v1.1 kickoff spike. Trigger: OpenCode changelog shows a `tui.plugin` config field or equivalent public mechanism.
+
+**How this aligns with `complement-not-redesign`**:
+This pivot makes the alignment stronger, not weaker. v1.0 was already a complement; this version doubles down by removing ALL TUI surface from scope. The plugin is a "bracito más" — a server-side extension arm that adds background task orchestration without touching OpenCode's UI, layout, or interaction model. Slash commands are the natural server-side Live Control surface: they're text-based, composable, and require zero TUI cooperation from the host.
+
+**Spike evidence**: engram topic `sdd/opencode-plan-review-live-control/spike/tq1-runtime-result` (obs #1235).
+
+---
 
 ### ADR-4: Move-to-background cancels via `session.abort`, not `tool.cancel`
 
@@ -186,38 +239,35 @@ export const taskBgArgs = z.object({
 
 ### Plan Review (v14, happy path)
 
+> **OQ-1 resolved (2026-04-24)**: No interactive picker in v1.0. PolicyResolver lookup replaces the picker step. Session-level override via `/task policy <bg|fg|default>` (set before the prompt turn). Per-entry interactive control deferred to v1.1.
+
 ```
 ┌────────┐    1. LLM responds    ┌────────────────────────────┐
 │  LLM   │─────────────────────→ │  experimental.chat.        │
-└────────┘  (3 task tool calls)  │  messages.transform hook   │
+└────────┘  (N task tool calls)  │  messages.transform hook   │
                                  └──────────┬─────────────────┘
-                                            │ 2. detectBatch(parts)
+                                            │ 2. iterate ALL task parts
+                                            │    (no batch threshold)
                                             ▼
                                  ┌────────────────────────────┐
-                                 │  BatchDetector             │
-                                 │  returns 3 entries         │
+                                 │  for each task call:       │
+                                 │  resolver.resolve(         │
+                                 │    agentName,              │
+                                 │    sessionOverride?        │
+                                 │  ) → PolicyDecision        │
+                                 │  (checks session-level     │
+                                 │   /task policy override    │
+                                 │   first, then per-agent    │
+                                 │   config default)          │
                                  └──────────┬─────────────────┘
-                                            │ 3. resolver.resolve(agentName)
-                                            ▼
-                                 ┌────────────────────────────┐
-                                 │  PolicyResolver            │
-                                 │  returns default modes     │
-                                 └──────────┬─────────────────┘
-                                            │ 4. picker.prompt(entries)
-                                            ▼
-                                 ┌────────────────────────────┐
-                                 │  Picker (TUI DialogSelect  │
-                                 │  OR clack fallback)        │
-                                 └──────────┬─────────────────┘
-                                            │ 5. user picks: [BG, FG, Skip]
+                                            │ 3. decisions: PolicyDecision[]
                                             ▼
                                  ┌────────────────────────────┐
                                  │  rewriteParts(decisions)   │
-                                 │  - BG → swap to task_bg    │
-                                 │  - FG → unchanged          │
-                                 │  - Skip → remove           │
+                                 │  - background → task_bg    │
+                                 │  - foreground → unchanged  │
                                  └──────────┬─────────────────┘
-                                            │ 6. output.messages mutated
+                                            │ 4. output.messages mutated
                                             ▼
                                  ┌────────────────────────────┐
                                  │  OpenCode executes         │
@@ -225,25 +275,46 @@ export const taskBgArgs = z.object({
                                  └────────────────────────────┘
 ```
 
-### Live Control — Move to Background (v14 TUI)
+**Policy config example** (in bg-subagents config):
+```json
+{
+  "policy": {
+    "sdd-explore": "background",
+    "sdd-apply":   "foreground",
+    "sdd-verify":  "background",
+    "*":           "background"
+  }
+}
+```
+
+**Session-level override** (slash command, set BEFORE prompt turn):
+```
+/task policy bg       → all task calls this turn → background
+/task policy fg       → all task calls this turn → foreground
+/task policy default  → revert to per-agent config defaults
+```
+
+### Live Control — Move to Background (v14, server-side slash command)
+
+> **Plan D pivot (ADR-8)**: Ctrl+B keybind and TUI DialogConfirm are dropped in v1.0. Live Control is implemented as server-side slash command interception.
 
 ```
-User presses Ctrl+B while FG task is running
+User types /task move-bg <id> in the OpenCode chat
      │
      ▼
 ┌─────────────────────────────────────┐
-│  TUI keybind handler                │
-│  1. Find current FG task in         │
-│     TaskRegistry (running, mode=fg) │
-│  2. If none → toast "no FG task"    │
+│  Server plugin message interceptor  │
+│  (chat.message hook or equivalent)  │
+│  Detects /task move-bg <id> pattern │
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  ui.DialogConfirm                   │
-│  "Move to background? Lost progress"│
+│  Validate: task <id> exists in      │
+│  registry, is running, mode=fg      │
+│  If not → reply with error text     │
 └──────────────┬──────────────────────┘
-               │ user confirms
+               │ valid
                ▼
 ┌─────────────────────────────────────┐
 │  1. registry.cancel(taskId)         │
@@ -260,9 +331,11 @@ User presses Ctrl+B while FG task is running
 │       meta: {tool: task_bg, ...},   │
 │       run: (signal) => runSubagent  │
 │     })                              │
-│  5. Toast: "Moved. ID=new-id"       │
+│  5. Reply: "Moved to BG. ID=new-id" │
 └─────────────────────────────────────┘
 ```
+
+**⚠ Open Question (for Phase 8)**: The exact server-side hook for intercepting user-typed slash commands is not yet confirmed. See "Open Questions" section below.
 
 ### Completion Delivery (v14)
 
@@ -311,14 +384,40 @@ BG task transitions to "completed"
 
 Unchanged from v0.1.4: `bus.emit("bg-subagents/task-complete", ...)` → `onDelivered(id)` → cancel 2000ms fallback timer → fallback uses `session.writeAssistantMessage`.
 
+### Diagnostic Log Routing (all paths)
+
+Per the Zero Visual Pollution constraint (see Non-Functional Requirements), ALL internal diagnostic output follows this routing:
+
+```
+┌──────────────────────────────────────────────────────┐
+│  plugin code (event-handler, delivery, index, etc.)  │
+│  logger.debug("v14-event", { event_type: ... })      │
+└─────────────────────┬────────────────────────────────┘
+                      │
+          ┌───────────┴────────────┐
+          │                        │
+          ▼ (default, prod)        ▼ (BG_SUBAGENTS_DEBUG=true only)
+┌──────────────────┐    ┌───────────────────────────────┐
+│  log file        │    │  stderr (NOT stdout)           │
+│  ~/.opencode/    │    │  development visibility only   │
+│  logs/           │    └───────────────────────────────┘
+│  bg-subagents.   │
+│  log             │
+└──────────────────┘
+
+stdout ← NOTHING from bg-subagents in production
+         (only user-visible markdown cards via
+          client.session.prompt noReply path)
+```
+
 ---
 
 ## File Changes
 
 | File | Action | Description |
 |---|---|---|
-| `packages/opencode/package.json` | Modify | Version 0.1.4 → 1.0.0. Add subpath export `"./tui"`. Add `zod-to-json-schema` dep (runtime). |
-| `packages/opencode/src/plugin.ts` | Modify | Entry becomes routing shim; exports `{default: {server, tui?}}`. Delegates to compat layer. |
+| `packages/opencode/package.json` | Modify | Version 0.1.4 → 1.0.0. Add `zod-to-json-schema` dep (runtime). No `./tui` subpath (ADR-8). |
+| `packages/opencode/src/plugin.ts` | Modify | Entry becomes routing shim; exports single `Plugin` function. Delegates to compat layer. |
 | `packages/opencode/src/types.ts` | Modify | Add v14 type mirrors. Keep legacy mirrors. Add `HostVersion` discriminated union. |
 | `packages/opencode/src/hooks/` | Delete | Contents moved to `host-compat/legacy/`. |
 | `packages/opencode/src/host-compat/` | Create | New subdirectory. |
@@ -337,32 +436,29 @@ Unchanged from v0.1.4: `bus.emit("bg-subagents/task-complete", ...)` → `onDeli
 | `packages/opencode/src/host-compat/v14/event-handler.ts` | Create | `event` hook — consumes typed SDK `Event` union (read-only, logs interesting events). |
 | `packages/opencode/src/host-compat/v14/batching-fallback.ts` | Create | Fallback Plan Review via `tool.execute.before` with time-window batching (used only if env flag set). |
 | `packages/opencode/src/plan-review/` | Create | Plan Review shared logic. |
-| `packages/opencode/src/plan-review/batch-detector.ts` | Create | `detectBatch(messageParts): BatchEntry[]`. |
-| `packages/opencode/src/plan-review/plan-picker.ts` | Create | `pickPlan(entries, opts): Promise<PlanDecision[]>`. Chooses clack or TUI dialog based on caller. |
-| `packages/opencode/src/plan-review/rewrite-parts.ts` | Create | `rewriteParts(parts, decisions): Part[]`. |
-| `packages/opencode/src/plan-review/types.ts` | Create | `BatchEntry`, `PlanDecision`, `PlanInterceptor` interface. |
-| `packages/opencode/src/tui-plugin/index.ts` | Create | TUI plugin entry. Exports `{default: {tui: TuiPlugin}}`. |
-| `packages/opencode/src/tui-plugin/live-control.ts` | Create | Ctrl+B keybind + confirmation dialog + cancel+re-spawn flow. |
-| `packages/opencode/src/tui-plugin/plan-review-dialog.ts` | Create | `ui.DialogSelect`-based picker implementation. |
-| `packages/opencode/src/tui-plugin/commands.ts` | Create | 5 slash commands. |
-| `packages/opencode/src/tui-plugin/sidebar.ts` | Create | Optional sidebar slot. |
-| `packages/opencode/src/tui-plugin/shared-state.ts` | Create | Module-level singleton for passing `TaskRegistry` reference from server plugin to TUI. |
+| `packages/opencode/src/plan-review/batch-detector.ts` | Create | `detectBatch(messageParts): BatchEntry[]`. Iterates ALL task parts — no minimum count threshold (OQ-1 resolution). |
+| ~~`packages/opencode/src/plan-review/plan-picker.ts`~~ | ~~Create~~ | **DROPPED (OQ-1 resolution, 2026-04-24)** — No interactive picker in v1.0. PolicyResolver batch decision replaces picker output. Deferred to v1.1 if per-entry control via TUI DialogSelect becomes available. |
+| `packages/opencode/src/plan-review/rewrite-parts.ts` | Create | `rewriteParts(parts, decisions): Part[]`. Takes `PolicyDecision[]` from PolicyResolver (not picker output). |
+| `packages/opencode/src/plan-review/types.ts` | Create | `BatchEntry`, `PolicyDecision`, `PlanInterceptor` interface. `PlanPicker` interface removed (OQ-1 resolution). |
+| ~~`packages/opencode/src/tui-plugin/`~~ | ~~Create~~ | **DROPPED (ADR-8)** — No TUI plugin in v1.0. Full directory deferred to v1.1. |
+| `packages/opencode/src/host-compat/v14/slash-commands.ts` | Create | Server-side `/task *` slash command interceptor. Handles `list`, `show`, `logs`, `kill`, `move-bg`. |
 | `packages/opencode/src/strategies/OpenCodeTaskSwapStrategy.ts` | Modify | Consult host version from host_context. |
 | `packages/opencode/src/runtime.ts` | Modify | Support v14 `client.session.*` API alongside legacy `session.create/prompt`. |
 | `packages/opencode/src/__tests__/host-compat/` | Create | Tests for version detection + both builder paths. |
 | `packages/opencode/src/__tests__/plan-review/` | Create | Tests for batch detector, picker, rewrite. |
-| `packages/opencode/src/__tests__/tui-plugin/` | Create | Tests for TUI plugin (mocked TuiPluginApi). |
+| ~~`packages/opencode/src/__tests__/tui-plugin/`~~ | ~~Create~~ | **DROPPED (ADR-8)** — No TUI plugin in v1.0. |
+| `packages/opencode/src/__tests__/host-compat/v14/slash-commands.test.ts` | Create | Tests for server-side slash command interceptor. |
 | `packages/opencode/src/__tests__/integration/v14-plan-review.test.ts` | Create | End-to-end v14 with mocked OpencodeClient. |
-| `packages/opencode/src/__tests__/integration/live-control.test.ts` | Create | End-to-end TUI move-bg with mocks. |
+| `packages/opencode/src/__tests__/integration/live-control.test.ts` | Create | End-to-end `/task move-bg <id>` via server-side message interception. |
 | `packages/opencode/src/__tests__/integration/opencode-adapter.test.ts` | Modify | Update to exercise compat routing. |
-| `packages/opencode/README.md` | Modify | Fix `plugins` → `plugin`. Document dual-mode. Describe Plan Review + Live Control UX. Migration note. |
+| `packages/opencode/README.md` | Modify | Fix `plugins` → `plugin`. Document single main export. Describe Plan Review + slash command Live Control UX. Migration note. |
 | `docs/architecture.md` | Modify | Updated component diagram with compat layer. |
 | `docs/migration-v0.1-to-v1.0.md` | Create | Migration guide for existing users. |
 | `docs/skills/bg-subagents/SKILL.md` | Modify | Update for v1.0 UX and correct field names. |
 | `docs/upstream/gentle-ai-pr.md` | Modify | Refine with v1.0 feature list and demo placeholder. |
 | `.changeset/` | New changeset file | Major bump on `-opencode`; patch on `-core` if interface additions. |
 
-**Summary**: ~18 new files, ~10 modified, ~5 moved/deleted.
+**Summary**: ~13 new files, ~10 modified, ~5 moved/deleted. (ADR-8 drops ~6 TUI files from the original count.)
 
 ---
 
@@ -418,23 +514,15 @@ export interface PlanInterceptor {
 
 export interface InterceptorContext {
   readonly resolver: PolicyResolver;
-  readonly picker: PlanPicker;
+  // picker removed — OQ-1 resolved (2026-04-24): no interactive picker in v1.0.
+  // PolicyResolver.resolveBatch() replaces picker output entirely.
   readonly logger?: Logger;
 }
 ```
 
-### TUI plugin shared state
+### ~~TUI plugin shared state~~ (DROPPED — ADR-8)
 
-```typescript
-// packages/opencode/src/tui-plugin/shared-state.ts
-// Module-level singleton — survives as long as the Node process.
-export class SharedPluginState {
-  readonly registry: TaskRegistry;
-  readonly resolver: PolicyResolver;
-  registerFromServer(state: SharedPluginState): void;
-  static current(): SharedPluginState | null;
-}
-```
+> `src/tui-plugin/shared-state.ts` is not shipped in v1.0. No shared state is needed when all Live Control commands go through the server plugin.
 
 ### v14 Delivery Coordinator
 
@@ -454,20 +542,83 @@ export function createV14Delivery(opts: {
 
 ### `package.json` `exports`
 
+> **Plan D pivot (ADR-8)**: Single export only. The `./tui` subpath is dropped for v1.0.
+
 ```json
 {
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./tui": {
-      "types": "./dist/tui-plugin/index.d.ts",
-      "import": "./dist/tui-plugin/index.js"
     }
   }
 }
 ```
+
+---
+
+## Non-Functional Requirements
+
+### Zero visual pollution (hard constraint)
+
+**Rule**: bg-subagents MUST emit ZERO output to stdout during normal production operation. Any raw JSON, structured log line, or diagnostic print that reaches stdout is a critical defect — it corrupts the OpenCode TUI and violates the `complement-not-redesign` principle. This was surfaced by user feedback from a screenshot showing raw JSON blobs like `{"ts":...,"level":"info","msg":"v14-event","event_type":"session.idle",...}` polluting the OpenCode CLI. User's exact verdict: "unacceptable before v1.0 ships."
+
+See engram topic `preference/zero-cli-pollution` for the original feedback context and the specific screenshot evidence.
+
+**Where user-visible content MAY appear**: ONLY via `messages.transform` injecting clean markdown cards through `client.session.prompt({ ..., body: { noReply: true, parts: [...] } })`. The markdown card format is the sole permitted user-visible channel. No raw text, no JSON, no structured logs in chat output.
+
+**Debug opt-in**: `BG_SUBAGENTS_DEBUG=true` enables stdout diagnostic output **exclusively for local development**. When this env var is unset (the default, and always the case in installed/production use), all diagnostic output MUST be suppressed from stdout. Debug mode MUST NOT be enabled in CI or in published npm packages.
+
+**Log file target**: All diagnostic messages (info, debug, warn, error) route to a log file. Cross-platform path resolution:
+
+```
+Unix/macOS:  ~/.opencode/logs/bg-subagents.log
+Windows:     %APPDATA%\opencode\logs\bg-subagents.log  (resolved via os.homedir() + platform check)
+Override:    BG_SUBAGENTS_LOG_FILE=<absolute-path>     (escape hatch for CI or custom setups)
+```
+
+Resolution order: `BG_SUBAGENTS_LOG_FILE` env var → platform-default path. The `createLogger` factory resolves the path once at boot and holds the file descriptor for the process lifetime.
+
+**Centralized logger contract** (`packages/core/src/logger.ts`):
+
+```typescript
+export interface Logger {
+  debug(msg: string, meta?: Record<string, unknown>): void;
+  info(msg: string, meta?: Record<string, unknown>): void;
+  warn(msg: string, meta?: Record<string, unknown>): void;
+  error(msg: string, meta?: Record<string, unknown>): void;
+}
+
+export function createLogger(namespace: string): Logger;
+```
+
+- All methods route to the log file in production (one JSON-line per call with `ts`, `level`, `ns`, `msg`, `meta`).
+- When `BG_SUBAGENTS_DEBUG=true`, methods additionally write to stderr (NOT stdout) so the terminal can show them without corrupting TUI stdout.
+- `debug()` is a strict no-op when `BG_SUBAGENTS_DEBUG` is unset — zero overhead in production.
+- Existing `console.log`, `console.error`, and any direct `process.stdout.write` calls in the plugin codebase MUST be replaced with logger calls. See the stdout sweep tasks in Phase 7.5.
+
+**Error handling policy**:
+
+- Non-critical errors (delivery retry, event parsing failure, slash command parse error): log to file silently. Never surface in stdout.
+- Critical, user-actionable errors (plugin boot failure, registry corruption, task spawn failure): surface via a markdown card injected through `client.session.prompt` — NEVER via a raw `console.error` or stdout dump.
+- Format for critical error card:
+  ```
+  **[bg-subagents] Error**: <short description>.
+  Check `~/.opencode/logs/bg-subagents.log` for details.
+  ```
+
+**Log file behavior**:
+
+- File is created on first write if it does not exist. Parent directory is created if missing.
+- Append-only. No automatic rotation in v1.0 (deferred to v1.1 if log size becomes a concern).
+- On file-open failure, the plugin continues operating (task orchestration still works) and falls back to stderr-only logging with a single one-time warning on stderr.
+
+**Files implementing this constraint**:
+- `packages/core/src/logger.ts` — centralized logger (new file, Phase 7.5)
+- `packages/opencode/src/host-compat/v14/event-handler.ts` — replace `console.log` with `logger.debug`
+- `packages/opencode/src/host-compat/v14/index.ts` — replace `plugin:booted` log
+- `packages/opencode/src/host-compat/v14/delivery.ts` — replace `delivery:primary-*` logs
+- `packages/opencode/src/host-compat/legacy/*` — same discipline for all legacy codepath files
 
 ---
 
@@ -476,16 +627,19 @@ export function createV14Delivery(opts: {
 | Layer | What to Test | Approach |
 |---|---|---|
 | Unit | `detectHostVersion(ctx)` with hand-crafted ctx objects | Vitest table-driven tests. Cover: legacy ctx, v14 ctx, partial ctx, env override, unknown |
-| Unit | `batch-detector.ts` — various message parts | Table-driven: 0, 1, 2, 3+ task calls, mixed with non-task, re-entry (task_bg) |
-| Unit | `rewrite-parts.ts` — decision → parts transformation | For each decision kind: foreground unchanged, background swapped, skip removed |
-| Unit | `plan-picker.ts` — clack fallback renders and resolves | Mock clack prompts, verify output |
+| Unit | `batch-detector.ts` — various message parts | Table-driven: 0, 1, 2, 3+ task calls, mixed with non-task, re-entry (task_bg). No minimum threshold (OQ-1 resolution). |
+| Unit | `rewrite-parts.ts` — decision → parts transformation | For each decision kind: foreground unchanged, background swapped. Skip decision removed (no picker = no skip path in v1.0). |
+| ~~Unit~~ | ~~`plan-picker.ts` — clack fallback renders and resolves~~ | **DROPPED (OQ-1 resolution, 2026-04-24)** — No interactive picker in v1.0. |
+| Unit | PolicyResolver batch mode — per-agent config + session override | Table-driven: agent name matches config key, wildcard fallback, session override wins |
+| Unit | `/task policy` slash command — session override sets and clears | Assert session state mutated; PolicyResolver honors override on next turn |
 | Unit | `delivery.ts` (v14) — primary + fallback paths | Mock `OpencodeClient`, assert single-delivery dedupe |
-| Unit | `tui-plugin/live-control.ts` — keybind handler | Mock `TuiPluginApi`, assert dialog shown, cancel invoked, re-spawn called |
-| Unit | `tui-plugin/commands.ts` — slash command handlers | Mock registry, assert correct state transitions |
+| ~~Unit~~ | ~~`tui-plugin/live-control.ts`~~ | **DROPPED (ADR-8)** — No TUI plugin in v1.0 |
+| ~~Unit~~ | ~~`tui-plugin/commands.ts`~~ | **DROPPED (ADR-8)** — No TUI plugin in v1.0 |
+| Unit | `host-compat/v14/slash-commands.ts` — server-side interceptor | Mock message hook; assert `/task list|show|logs|kill|move-bg` patterns parsed + dispatched |
 | Integration | `buildV14Hooks` wiring — mocked ctx | Assert all hooks registered, correct types, plugin:booted log emitted |
 | Integration | `buildLegacyHooks` wiring — mocked ctx | Parity with existing v0.1.4 behavior (regression suite) |
-| Integration | v14 Plan Review E2E | Fake `experimental.chat.messages.transform` trigger with 3 task calls → assert picker shown → assert parts rewritten |
-| Integration | v14 Live Control E2E | Fake TuiPluginApi → press "Ctrl+B" simulated key → assert cancel + re-spawn flow completes |
+| Integration | v14 Plan Review E2E | Fake `experimental.chat.messages.transform` trigger with 3 task calls → PolicyResolver assigns BG/FG per agent_name → assert parts rewritten per policy decisions (no picker) |
+| Integration | v14 Live Control E2E | Fake message hook with `/task move-bg <id>` input → assert cancel + re-spawn flow completes |
 | Integration | v14 Completion Delivery | Fake `OpencodeClient.session.message.create` → assert primary fires, fallback cancelled |
 | Regression | Existing 432 vitest tests | Must remain green after refactor (move to `host-compat/legacy/` paths) |
 | Manual | Real OpenCode 1.14.21 on user's machine | E2E validation before publish: install local, run sdd-orchestrator, verify Plan Review + Live Control |
@@ -517,10 +671,10 @@ From `v0.1.x` on legacy OpenCode:
 - No config changes needed.
 
 From `v0.1.x` on OpenCode 1.14+ (broken installs):
-- Upgrade to `v1.0.0` — plugin works for the first time, Plan Review + Live Control available.
-- Recommended: add `/tui` subpath to `opencode.json`:
+- Upgrade to `v1.0.0` — plugin works for the first time. Plan Review + slash command Live Control available.
+- Single entry in `opencode.json` (no `/tui` subpath needed):
   ```json
-  {"plugin": ["@maicolextic/bg-subagents-opencode", "@maicolextic/bg-subagents-opencode/tui"]}
+  {"plugin": ["@maicolextic/bg-subagents-opencode"]}
   ```
 - Migration guide at `docs/migration-v0.1-to-v1.0.md`.
 
@@ -528,7 +682,7 @@ From `v0.1.x` on OpenCode 1.14+ (broken installs):
 
 - `BG_SUBAGENTS_FORCE_COMPAT=legacy|v14` — override detection.
 - `BG_SUBAGENTS_PLAN_REVIEW=messages-transform|batching|off` — pick Plan Review impl.
-- `BG_SUBAGENTS_TUI=on|off` — opt-out of TUI plugin if installed.
+- ~~`BG_SUBAGENTS_TUI=on|off`~~ — **DROPPED (ADR-8)**. No TUI plugin in v1.0.
 
 No phased rollout needed (no user data migration).
 
@@ -542,7 +696,7 @@ Three non-obvious rules from the OpenCode 1.14.22 plugin loader, discovered duri
 
 2. **Auto-discovery matches `.ts` ONLY, top-level ONLY** at `~/.config/opencode/plugins/`. Not `.mjs`, not `.js`, not recursive. Helper files and spike scripts in that directory that are NOT plugins MUST use a `.mjs` extension to avoid being mis-loaded as plugins on every boot.
 
-3. **TUI plugins use a SEPARATE loader** — NOT the main plugin dir. Dropping a `TuiPlugin` file into `~/.config/opencode/plugins/` crashes OpenCode at boot (`TypeError: undefined is not an object (evaluating 'f.auth')`). A runtime API `TuiPluginApi.plugins.add(spec)` exists; the config-based TUI loading path is still unknown and deferred to Phase 11 (TQ-1). Implication for ADR-3: the `./tui` subpath export alone is not sufficient — we also need to document the user-facing registration step once Phase 11 identifies the mechanism.
+3. **TUI plugins use a SEPARATE loader** — NOT the main plugin dir. Dropping a `TuiPlugin` file into `~/.config/opencode/plugins/` crashes OpenCode at boot (`TypeError: undefined is not an object (evaluating 'f.auth')`). The `plugin` array in `opencode.json` also rejects `{tui: fn}` exports with `"must default export an object with server()"` (confirmed in TQ-1 runtime spike, 2026-04-24). **This refuted ADR-3 and triggered ADR-8 (Plan D pivot).** The `./tui` subpath is NOT shipped in v1.0. A runtime API `TuiPluginApi.plugins.add(spec)` exists; the config-based TUI loading path remains unknown and is deferred to v1.1 research.
 
 These rules are invariants for the plugin and for any spike scripts we deploy during development.
 
@@ -556,10 +710,78 @@ All spike-gated questions resolved during Phase 1 (2026-04-23). Two defer to lat
 - [x] **EQ-1 RESOLVED (GO, 2026-04-23, commit b061006)** — `experimental.chat.messages.transform` fires per-turn and mutations reach the LLM payload (LLM Thinking confirmed mutated text was received; UI shows original). Caveat: hook fires **multiple times per turn with fresh `output.messages`**; mutations do NOT persist to session history. ADR-2 amended with idempotency requirement.
 - [x] **SQ-1 RESOLVED (GO, 2026-04-23, commit 0258072)** — `client.session.abort({ path: { id } })` propagates to the plugin's `ctx.abort: AbortSignal` within ~1s on OpenCode 1.14.22. v1 SDK shape required.
 - [x] **DQ-1 RESOLVED (GO, 2026-04-23, commit 2ffe45c)** — `client.session.prompt({ path: { id }, body: { noReply: true, parts: [...] } })` creates a user turn in the session transcript **without triggering an auto assistant reply**. Requires v1 SDK shape (NOT flat `{ sessionID }`). See ADR-4 amendment for the critical v1-vs-v2 note.
-- [ ] **TQ-1 DEFERRED to Phase 11** — TUI plugin config loading path is unknown. Auto-discovery dir crashes at boot for TUI files. Type-level confirmed (`PluginModule` / `TuiPluginModule` are exclusive shapes; `./tui` subpath exists). Three Plan Bs documented in `docs/opencode-1.14-verification.md`. Phase 11's first sub-task: map the TUI loader (inspect `TuiConfigView.plugin`, `opencode` CLI tui subcommands) before picking a Plan B.
+- [x] **TQ-1 RESOLVED (NO-GO, 2026-04-24)** — TUI plugin cannot be loaded by OpenCode 1.14.22 via either auto-discovery dir or `opencode.json` `plugin` array. Both reject `{tui: fn}` exports. This refutes ADR-3 and triggers ADR-8 (Plan D). TUI plugin deferred to v1.1. Evidence: engram #1235, topic `sdd/opencode-plan-review-live-control/spike/tq1-runtime-result`.
 - [ ] **MQ-1 DEFERRED to Phase 16 manual E2E** — cross-minor consistency (1.14.20 ↔ 1.14.22) validated during manual end-to-end gating before release.
 
-**Spike evidence**: per-spike verdicts + discoveries consolidated in `docs/opencode-1.14-verification.md`. Per-spike logs at `docs/spikes/{eq,dq,sq,tq}-1-output.log` (gitignored).
+---
+
+## Open Questions (Post-Pivot, v1.0)
+
+### OQ-1: How does the server plugin prompt the user for BG/FG/Skip decisions without TUI DialogSelect?
+
+**STATUS: RESOLVED — 2026-04-24**
+**Verdict: PRIMARY = Candidate 7 (PolicyResolver defaults + slash command override). FALLBACK = Candidate 6 (async chat injection) — documented but NOT implemented in v1.0, deferred to v1.1.**
+
+**Spike evidence**: engram topic `sdd/opencode-plan-review-live-control/oq-1/question-raise-research` (obs #1237). Type-level exhaustive research confirmed Candidate 3 (native `QuestionRequest`) is architecturally impossible from a server plugin in OpenCode 1.14.22.
+
+---
+
+**Why Candidate 3 is impossible** (type-level spike, 2026-04-24):
+
+- `PluginInput.client` is the **v1 `OpencodeClient`** from `@opencode-ai/sdk`. It has zero `question` surface — not present in v1 types at all.
+- The v2 SDK has a `Question` class (`list`, `reply`, `reject`), but **no create/raise endpoint**. `QuestionRequest` is fired internally by OpenCode when the AI assistant calls an internal tool during an LLM turn — external plugins cannot create one.
+- `QuestionRequest.tool?: { messageID, callID }` proves it is tied to a real LLM tool call, not an external API call.
+- `EventQuestionAsked` flow: OpenCode server fires internally → TUI `TuiState.question()` reads session state → TUI renders modal → user answers → client calls `/question/{id}/reply`. A server plugin in `messages.transform` has no entry point into this chain.
+- A server plugin cannot block the `messages.transform` hook waiting for an async question reply — it would deadlock the message pipeline.
+
+**Why Candidate 7 over Candidate 6** (acceptance decision, Michael, 2026-04-24):
+
+- Candidate 6 (async chat injection) — inject a synthetic assistant message asking "BG or FG?", parse user's next text reply — is architecturally viable but adds a full LLM round-trip per plan-review turn, corrupts the conversation flow, and is hard to test reliably. Complexity does not justify the marginal gain for v1.0.
+- Candidate 7 (PolicyResolver defaults) is zero interactive overhead, zero blocking, and leverages the existing `PolicyResolver` primitive that was already in the design. It fits `complement-not-redesign` better than any alternative: the plugin stays silent during the transform and applies config-driven intent.
+- Per-entry interactive control (Candidate 6) is deferred to v1.1, where it can be done properly via TUI DialogSelect if/when OpenCode exposes a public TUI loader.
+
+**Resolved mechanism — Candidate 7 (v1.0 implementation)**:
+
+1. **PolicyResolver per-agent default modes** — configured in bg-subagents config under `policy` key. Syntax:
+   ```json
+   {
+     "policy": {
+       "sdd-explore": "background",
+       "sdd-apply":   "foreground",
+       "sdd-verify":  "background",
+       "sdd-tasks":   "background",
+       "*":           "background"
+     }
+   }
+   ```
+   PolicyResolver resolves `agentName → "background" | "foreground"`. Wildcard `"*"` is the catch-all default. The `PolicyResolver.resolveBatch(entries[])` method (new or extended) returns `PolicyDecision[]` for the full set of task calls in one step.
+
+2. **Slash command `/task policy <bg|fg|default>`** — sets a session-level override that PolicyResolver honors for the NEXT turn's `messages.transform` invocation. Syntax:
+   - `/task policy bg` — all task calls next turn → background (regardless of per-agent config)
+   - `/task policy fg` — all task calls next turn → foreground
+   - `/task policy default` — clear override; revert to per-agent config defaults
+   
+   Mechanism: intercept in the server-side message hook (same interceptor as Phase 12 slash commands). Store override in a session-scoped map (keyed by session ID). PolicyResolver reads this map before per-agent config lookup.
+
+3. **Post-spawn `/task move-bg <id>`** — already in Plan D Phase 12. Allows moving a specific foreground task to background after it has started. Not part of Plan Review proper.
+
+4. **NO picker, NO prompt, NO blocking during `messages.transform`** — the hook fires, iterates all task parts, calls PolicyResolver, rewrites, returns. Total overhead: O(N) PolicyResolver lookups, all synchronous or fast-async.
+
+**Deferred (v1.1)**: Per-entry interactive control (Candidate 6 async chat injection or TUI DialogSelect picker). Trigger for v1.1 research: OpenCode changelog shows `tui.plugin` config field or equivalent public TUI loader. At that point, a real multi-option picker can replace the PolicyResolver lookup step without changing the `messages.transform` interception layer.
+
+---
+
+**Original candidates list** (for historical reference):
+
+1. ~~`@clack/prompts` inline~~ — TUI owns terminal; concurrent writes corrupt render. Not viable without isolated terminal access.
+2. ~~`PermissionRequest` raise~~ — binary allow/deny only; insufficient for 3-choice (BG/FG/Skip). Also no confirmed API from server plugin.
+3. ~~`QuestionRequest` (Candidate 3)~~ — **IMPOSSIBLE**. No raise endpoint in v1 or v2 SDK. Tied to internal LLM tool calls only. (Engram #1237.)
+4. ~~Custom LLM message injection via `messages.transform`~~ — adds LLM round-trip, corrupts flow.
+5. ~~Non-interactive PolicyResolver fallback~~ — this is now Candidate 7 (the primary, not a "last resort").
+6. **Async chat injection** — documented, NOT implemented in v1.0. Deferred to v1.1.
+7. **PolicyResolver defaults + slash override** — CHOSEN PRIMARY for v1.0.
+
+**Spike evidence**: `docs/opencode-1.14-verification.md`. Engram #1237 (OQ-1 type-level research). Engram #1236 (Plan D acceptance).
 
 ---
 
