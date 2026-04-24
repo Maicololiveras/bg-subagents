@@ -79,11 +79,31 @@ class BatchingBeforeInterceptor implements PlanInterceptor { /* v14 fallback + l
 
 Env flag selects implementation; defaults to `MessagesTransformInterceptor` on v14.
 
-### ADR-3: TUI plugin as separate module export (`./tui`) — ~~SUPERSEDED~~
+### ADR-3: TUI plugin as separate module export (`./tui`) — ~~SUPERSEDED~~ → REACTIVATED
 
-> **STATUS: SUPERSEDED by ADR-8 (2026-04-24, Plan D pivot).**
-> ADR-3 is preserved here as a historical record. Do not implement it in v1.0.
-> Full spike evidence in engram topic `sdd/opencode-plan-review-live-control/spike/tq1-runtime-result`.
+> **STATUS (original): SUPERSEDED by ADR-8 (2026-04-24, Plan D pivot).**
+> ADR-3 was preserved as historical record after a runtime spike (TQ-1) using `opencode.json` concluded that the TUI loader rejected `{tui: fn}` exports.
+>
+> **Post-TQ-1 re-spike (2026-04-24) — ADR-3 REACTIVATED**
+>
+> The original TQ-1 spike used `opencode.json` as the config file — which routes to the **server plugin loader**, not the TUI plugin loader. The server loader correctly rejects `{tui: fn}` shapes with `"must default export an object with server()"`. This was a configuration mistake, not evidence that TUI loading is impossible.
+>
+> A subsequent re-spike using `tui.json` (the correct config file for TUI plugins, introduced in anomalyco/opencode PR #19347 on 2026-03-27) confirmed the TUI loader is fully functional in OpenCode 1.14.23+:
+>
+> ```
+> # tui.json (in workspace root or ~/.config/opencode/)
+> { "plugin": ["@maicolextic/bg-subagents-opencode/tui"] }
+> ```
+>
+> Evidence from the re-spike runtime log:
+> ```
+> service=tui.plugin path=... loading tui plugin
+> phase=boot meta.id=bg-subagents-spike-tq1
+> ```
+>
+> The `id` field in the TUI plugin's default export was present (`id: "bg-subagents-spike-tq1"`) and the verify log confirmed boot via `meta.id`. See engram topic `sdd/opencode-plan-review-live-control/spike/tq1-runtime-result` for full log evidence.
+>
+> **ADR-3 is the CURRENT design for v1.0 TUI distribution.** ADR-8's rationale was based on the wrong config file; it is superseded by ADR-9 (see below). The `./tui` subpath export ships in v1.0.
 
 **Original choice**: Ship TUI plugin as `@maicolextic/bg-subagents-opencode/tui` — loaded by user explicitly in `opencode.json` (exact config mechanism TBD — see TQ-1 below).
 
@@ -103,7 +123,11 @@ Env flag selects implementation; defaults to `MessagesTransformInterceptor` on v
 
 ### ADR-8: v1.0 is server-side only; TUI plugin deferred to v1.1
 
-**Choice**: v1.0 ships as a single-export server-only plugin. TUI features (Ctrl+B keybind, DialogSelect picker, sidebar slot, `./tui` subpath) are removed from v1.0 scope and deferred to v1.1.
+**Superseded 2026-04-24 by ADR-9.**
+
+The TUI loader was proven functional in OpenCode 1.14.23+ via `tui.json` (re-spike after TQ-1). ADR-8 was written when we believed the TUI loader was inaccessible — that belief was based on the wrong config file (`opencode.json` instead of `tui.json`). v1.0 scope was subsequently expanded to include the TUI layer (see ADR-9). ADR-8 is preserved below as historical record.
+
+**Choice (historical)**: v1.0 ships as a single-export server-only plugin. TUI features (Ctrl+B keybind, DialogSelect picker, sidebar slot, `./tui` subpath) are removed from v1.0 scope and deferred to v1.1.
 
 **Rationale**:
 The TQ-1 runtime spike (2026-04-24) proved that OpenCode 1.14.22's plugin loader cannot load a `{tui: fn}` default export — it demands `{server: fn}` or a `Plugin` function, and rejects TUI-shaped modules with an unambiguous error. There is no discovered workaround. Building a TUI plugin surface for v1.0 under these constraints would mean: (a) shipping code that cannot load at runtime, or (b) investing in a speculative config-field research path with no guarantee of finding a public mechanism before the release gate. Neither is acceptable.
@@ -138,6 +162,42 @@ The TQ-1 runtime spike (2026-04-24) proved that OpenCode 1.14.22's plugin loader
 This pivot makes the alignment stronger, not weaker. v1.0 was already a complement; this version doubles down by removing ALL TUI surface from scope. The plugin is a "bracito más" — a server-side extension arm that adds background task orchestration without touching OpenCode's UI, layout, or interaction model. Slash commands are the natural server-side Live Control surface: they're text-based, composable, and require zero TUI cooperation from the host.
 
 **Spike evidence**: engram topic `sdd/opencode-plan-review-live-control/spike/tq1-runtime-result` (obs #1235).
+
+### ADR-9: v1.0 includes TUI layer (scope expansion 2026-04-24)
+
+**Choice**: v1.0 scope EXPANDED from server-side only (Plan D / ADR-8) to include the full TUI plugin layer.
+
+**Rationale**:
+- User's original vision always included the sidebar + keybinds + task modal UX (the "↓ to manage" interaction pattern native to OpenCode). We deferred under Plan D only because we believed the TUI loader was inaccessible. It is not — `tui.json` unlocks it.
+- Baby due July 2026. Target ship v1.0.0 to npm: early June 2026 (~6 weeks from 2026-04-24). TUI layer is estimated at 3–5 additional weeks; it fits the timeline comfortably.
+- Nothing already built is wasted: all server-side code (PolicyResolver, rewrite-parts, messages-transform, `/task policy`, `/task list/show/logs/kill/move-bg`) remains necessary and ships as-is. The TUI plugin is purely additive.
+- Shipping a complete TUI-native v1.0 makes the gentle-ai PR and the OpenCode docs PR concrete demos — maximizes upstream visibility and community value.
+- Users on OpenCode without `tui.json` support (pre-1.14.23) still get full server-side functionality. TUI plugin is opt-in via `tui.json`. No regression for server-only users.
+
+**What is IN v1.0 — TUI layer**:
+- Sidebar slot (`api.slots.register` with `sidebar_content`) — live background task list, reads from SharedPluginState, refreshes every 1000ms.
+- TUI-native plan review dialog (`api.ui.DialogSelect`) — interactive picker on multi-delegation turns; ADDITIVE on top of PolicyResolver (Candidate 7); does not replace PolicyResolver path.
+- Keybinds: `Ctrl+B` (focus BG task panel), `Ctrl+F` (filter tasks), `↓` (select task for detail modal) — registered via `TuiCommand.keybind`.
+- Modal for task details (logs, actions, move-bg) — `api.ui.DialogSelect`.
+- SharedPluginState via `Symbol.for` globalThis pattern shared between server plugin and TUI plugin.
+
+**What stays server-side-only (also in v1.0)**:
+- PolicyResolver + `resolveBatch` — the synchronous `messages.transform` constraint does not permit async TUI picker on every message turn.
+- `messages-transform` interceptor — synchronous, server-side.
+- `/task policy` slash command — session override for PolicyResolver.
+- `/task list`, `/task show`, `/task logs`, `/task kill`, `/task move-bg` — server-side slash commands (still needed; TUI is additive).
+- Rewrite-parts, completion messages as markdown cards.
+
+**Why both** (server + TUI): The TUI plugin is additive. Users without `tui.json` (or on legacy OpenCode) still get full server-side orchestration. Users who add `tui.json` get the visual UX on top. The server-side slash commands remain the canonical Live Control interface; the TUI layer provides a richer optional experience.
+
+**Distribution**:
+```json
+// opencode.json (server plugin — required)
+{ "plugin": ["@maicolextic/bg-subagents-opencode"] }
+
+// tui.json (TUI plugin — optional, adds sidebar + keybinds + modals)
+{ "plugin": ["@maicolextic/bg-subagents-opencode/tui"] }
+```
 
 ---
 
@@ -416,7 +476,7 @@ stdout ← NOTHING from bg-subagents in production
 
 | File | Action | Description |
 |---|---|---|
-| `packages/opencode/package.json` | Modify | Version 0.1.4 → 1.0.0. Add `zod-to-json-schema` dep (runtime). No `./tui` subpath (ADR-8). |
+| `packages/opencode/package.json` | Modify | Version 0.1.4 → 1.0.0. Add `zod-to-json-schema` dep (runtime). Add `./tui` subpath export (ADR-9 rescues TUI layer). |
 | `packages/opencode/src/plugin.ts` | Modify | Entry becomes routing shim; exports single `Plugin` function. Delegates to compat layer. |
 | `packages/opencode/src/types.ts` | Modify | Add v14 type mirrors. Keep legacy mirrors. Add `HostVersion` discriminated union. |
 | `packages/opencode/src/hooks/` | Delete | Contents moved to `host-compat/legacy/`. |
@@ -440,13 +500,13 @@ stdout ← NOTHING from bg-subagents in production
 | ~~`packages/opencode/src/plan-review/plan-picker.ts`~~ | ~~Create~~ | **DROPPED (OQ-1 resolution, 2026-04-24)** — No interactive picker in v1.0. PolicyResolver batch decision replaces picker output. Deferred to v1.1 if per-entry control via TUI DialogSelect becomes available. |
 | `packages/opencode/src/plan-review/rewrite-parts.ts` | Create | `rewriteParts(parts, decisions): Part[]`. Takes `PolicyDecision[]` from PolicyResolver (not picker output). |
 | `packages/opencode/src/plan-review/types.ts` | Create | `BatchEntry`, `PolicyDecision`, `PlanInterceptor` interface. `PlanPicker` interface removed (OQ-1 resolution). |
-| ~~`packages/opencode/src/tui-plugin/`~~ | ~~Create~~ | **DROPPED (ADR-8)** — No TUI plugin in v1.0. Full directory deferred to v1.1. |
+| `packages/opencode/src/tui-plugin/` | Create | **RESCUED (ADR-9, 2026-04-24)** — TUI plugin IN v1.0. Includes `shared-state.ts`, `plan-review-dialog.ts`, `sidebar.ts`, `commands.ts`, `index.ts`. |
 | `packages/opencode/src/host-compat/v14/slash-commands.ts` | Create | Server-side `/task *` slash command interceptor. Handles `list`, `show`, `logs`, `kill`, `move-bg`. |
 | `packages/opencode/src/strategies/OpenCodeTaskSwapStrategy.ts` | Modify | Consult host version from host_context. |
 | `packages/opencode/src/runtime.ts` | Modify | Support v14 `client.session.*` API alongside legacy `session.create/prompt`. |
 | `packages/opencode/src/__tests__/host-compat/` | Create | Tests for version detection + both builder paths. |
 | `packages/opencode/src/__tests__/plan-review/` | Create | Tests for batch detector, picker, rewrite. |
-| ~~`packages/opencode/src/__tests__/tui-plugin/`~~ | ~~Create~~ | **DROPPED (ADR-8)** — No TUI plugin in v1.0. |
+| `packages/opencode/src/__tests__/tui-plugin/` | Create | **RESCUED (ADR-9, 2026-04-24)** — TUI plugin tests back in v1.0. Covers shared-state, plan-review-dialog, sidebar slot. |
 | `packages/opencode/src/__tests__/host-compat/v14/slash-commands.test.ts` | Create | Tests for server-side slash command interceptor. |
 | `packages/opencode/src/__tests__/integration/v14-plan-review.test.ts` | Create | End-to-end v14 with mocked OpencodeClient. |
 | `packages/opencode/src/__tests__/integration/live-control.test.ts` | Create | End-to-end `/task move-bg <id>` via server-side message interception. |
@@ -542,7 +602,7 @@ export function createV14Delivery(opts: {
 
 ### `package.json` `exports`
 
-> **Plan D pivot (ADR-8)**: Single export only. The `./tui` subpath is dropped for v1.0.
+> **ADR-9 (2026-04-24)**: TUI subpath export RESTORED. Both main and `./tui` subpaths ship in v1.0. The `./tui` subpath is loaded via `tui.json` (NOT `opencode.json`) — see ADR-3 reactivation and the Plugin Loader Contract section for the `id` field requirement.
 
 ```json
 {
@@ -550,6 +610,10 @@ export function createV14Delivery(opts: {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui-plugin/index.d.ts",
+      "import": "./dist/tui-plugin/index.js"
     }
   }
 }
@@ -747,6 +811,44 @@ Three non-obvious rules from the OpenCode 1.14.22 plugin loader, discovered duri
 
 These rules are invariants for the plugin and for any spike scripts we deploy during development.
 
+**TUI plugin runtime requires `id` field**
+
+The SDK type `TuiPluginModule.id?: string` declares `id` as optional. However, the TUI plugin runtime loader in OpenCode 1.14.23 throws `TypeError: Path plugin ... must export id` if the `id` field is absent from the default export. The runtime enforces `id` as REQUIRED despite the type permitting its omission.
+
+**Rule**: Always include `id: string` in the default export of any TUI plugin:
+
+```typescript
+export default {
+  id: "bg-subagents-tui",   // REQUIRED at runtime, even though type says optional
+  tui: TuiPlugin,
+};
+```
+
+This is a candidate for the OpenCode docs PR (see `docs/upstream/opencode-docs-pr.md`): the type vs runtime mismatch should be documented or fixed upstream (either make `id: string` required in the type, or make the runtime tolerant of missing `id` by generating a uuid fallback).
+
+**SharedPluginState — Symbol.for globalThis pattern**
+
+The TUI plugin and the server plugin share the same Bun process (single runtime). They can share in-memory state without HTTP round-trips or module-graph assumptions via a well-known globalThis symbol:
+
+```typescript
+// Server plugin — sets at boot in buildV14Hooks
+const STATE_KEY = Symbol.for("@maicolextic/bg-subagents/shared");
+(globalThis as any)[STATE_KEY] = {
+  registry: taskRegistry,
+  policyStore: policyStore,
+  // ...other shared refs
+};
+
+// TUI plugin — reads at boot in tui-plugin/index.ts
+const STATE_KEY = Symbol.for("@maicolextic/bg-subagents/shared");
+const shared = (globalThis as any)[STATE_KEY];
+// shared.registry, shared.policyStore available directly
+```
+
+`Symbol.for(key)` is process-global and key-based — the same string key resolves to the same Symbol across any module boundary. Both plugins will get the same Symbol instance without importing from each other.
+
+**Plan B** (if processes are ever separated in a future OpenCode architecture): the existing server client query via `api.client` (already in the design for DQ-1) is the fallback. The SharedPluginState singleton is preferred for v1.0 because it has zero latency and no IPC overhead.
+
 ---
 
 ## Open Questions
@@ -815,6 +917,8 @@ All spike-gated questions resolved during Phase 1 (2026-04-23). Two defer to lat
 4. **NO picker, NO prompt, NO blocking during `messages.transform`** — the hook fires, iterates all task parts, calls PolicyResolver, rewrites, returns. Total overhead: O(N) PolicyResolver lookups, all synchronous or fast-async.
 
 **Deferred (v1.1)**: Per-entry interactive control (Candidate 6 async chat injection or TUI DialogSelect picker). Trigger for v1.1 research: OpenCode changelog shows `tui.plugin` config field or equivalent public TUI loader. At that point, a real multi-option picker can replace the PolicyResolver lookup step without changing the `messages.transform` interception layer.
+
+**Amendment 2026-04-24**: Candidate 7 (PolicyResolver + slash overrides) remains the PRIMARY path for server plugin `messages.transform` context — the synchronous constraint is unchanged; a server plugin cannot block the transform hook waiting for user input. The TUI plugin path (ADR-9 scope expansion) can OPTIONALLY offer a richer interactive picker via `api.ui.DialogSelect` for multi-delegation turns — documented in Phase 12.1/12.2 rescued tasks. Both paths coexist: the TUI picker is ADDITIVE and triggers on turns where the user is actively watching the TUI; the PolicyResolver path handles all other cases silently. The TUI picker does NOT replace PolicyResolver — it supplements it for interactive sessions.
 
 ---
 
