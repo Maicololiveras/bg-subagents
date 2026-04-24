@@ -185,6 +185,14 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 
 ---
 
+## Phase 13.5: TUI Keybinds (deferred from Phase 13)
+
+> **Implemented 2026-04-24** — optional scope deferred from Phase 13 due to scope cap. Registers Ctrl+B (focus BG task), Ctrl+F (focus FG task), and ↓ (open task panel) via `api.command.register(() => TuiCommand[])`. Strict TDD: RED test file written first, confirmed failing (module not found), then GREEN implementation, then integration into index.ts with 3 integration assertions added to index.test.ts.
+
+- [x] 13.5 **RED + GREEN + INTEGRATION: TUI keybind registration**. NEW file `tui-plugin/keybinds.ts` exports `registerKeybinds(api)`. Calls `api.command.register` once with a callback returning 3 `TuiCommand` entries: `ctrl+b` (Focus BG task), `ctrl+f` (Focus FG task), `down` (Open task panel). Each `onSelect` handler: reads `SharedPluginState.current()` (toast "bg-subagents not ready yet" if undefined), filters tasks by mode/status, calls `api.ui.dialog.replace` if matching tasks exist, else `api.ui.toast` with variant `"info"`. All logging via `createLogger("tui-plugin:keybinds")`. Zero stdout. `tui-plugin/index.ts` modified to import and call `registerKeybinds(api)` after `api.slots.register`. `index.test.ts` updated with `MockTuiCommandApi`, `command` in `makeApi()`, and 3 new assertions (command.register called once, callback returns 3 entries, keybinds include ctrl+b/ctrl+f/down). Test delta: +30 (keybinds.test.ts) +3 (index.test.ts) = +33. Total: 363 → 396. (Files: `packages/opencode/src/tui-plugin/keybinds.ts` (NEW), `packages/opencode/src/__tests__/tui-plugin/keybinds.test.ts` (NEW), `packages/opencode/src/tui-plugin/index.ts` (MODIFIED), `packages/opencode/src/__tests__/tui-plugin/index.test.ts` (MODIFIED))
+
+---
+
 ## Phase 14: Integration & E2E Tests
 
 - [ ] 14.1 **Integration test: v14 Plan Review E2E**. Fake `experimental.chat.messages.transform` trigger with 3 task calls (different agent names) → PolicyResolver assigns BG/FG per agent_name using configured policy → assert OpenCode receives rewritten parts (BG entries swapped to task_bg, FG entries unchanged). No picker invocation. Also: assert `/task policy bg` override forces all 3 to BG regardless of per-agent config. (Files: `packages/opencode/src/__tests__/integration/v14-plan-review.test.ts`)
