@@ -35,11 +35,12 @@
  * render types gracefully. A future phase (v1.1) will upgrade to a real SolidJS component
  * once @opentui/solid is available as a dev dep.
  *
- * ## FUTURE (Phase 13.5): Keybinds
+ * ## Keybinds (Phase 13.5)
  *
  * Per ADR-9, v1.0 includes Ctrl+B (focus BG task), Ctrl+F (focus FG task), and ↓
- * (open management panel) keybinds. Deferred to Phase 13.5 due to scope cap:
- * `api.command.register(() => [{ title, keybind, onSelect }])` is the correct surface.
+ * (open management panel) keybinds. Implemented in Phase 13.5 via `registerKeybinds(api)`
+ * from `./keybinds.ts`. Uses `api.command.register(() => TuiCommand[])` with `keybind`
+ * field on each command.
  *
  * ## Zero stdout guarantee
  *
@@ -54,7 +55,8 @@ import type { TuiPlugin } from "@opencode-ai/plugin/tui";
 import { createLogger } from "@maicolextic/bg-subagents-core";
 import { current } from "./shared-state.js";
 import { buildSidebarSlotPlugin } from "./sidebar.js";
-// Reserved for future plan-review trigger wiring (Phase 13.5 / v1.1):
+import { registerKeybinds } from "./keybinds.js";
+// Reserved for future plan-review trigger wiring (Phase v1.1):
 // import { createTuiPlanPicker } from "./plan-review-dialog.js";
 
 // ---------------------------------------------------------------------------
@@ -95,7 +97,22 @@ const Tui: TuiPlugin = async (api, _options, _meta) => {
   logger.info("TUI plugin boot: sidebar_content slot registered");
 
   // -------------------------------------------------------------------------
-  // 3. Polling heartbeat + lifecycle cleanup
+  // 3. Register TUI keybinds (Phase 13.5)
+  //
+  //    Ctrl+B → Focus BG task dialog
+  //    Ctrl+F → Focus FG task dialog
+  //    ↓      → Open task management panel (all tasks)
+  //
+  //    Uses api.command.register(() => TuiCommand[]). All handlers read
+  //    SharedPluginState.current() at invocation time — no stale state.
+  // -------------------------------------------------------------------------
+
+  registerKeybinds(api);
+
+  logger.info("TUI plugin boot: keybinds registered (ctrl+b, ctrl+f, down)");
+
+  // -------------------------------------------------------------------------
+  // 4. Polling heartbeat + lifecycle cleanup
   //
   //    The interval is a best-effort heartbeat for future reactive signal
   //    integration. For now the sidebar render function re-reads getSidebarData()
@@ -115,18 +132,6 @@ const Tui: TuiPlugin = async (api, _options, _meta) => {
     clearInterval(intervalId);
     logger.info("TUI plugin disposed");
   });
-
-  // -------------------------------------------------------------------------
-  // FUTURE (Phase 13.5): Keybind registration
-  //
-  //   api.command.register(() => [
-  //     { title: "Focus BG task", keybind: "ctrl+b", onSelect: () => { ... } },
-  //     { title: "Focus FG task", keybind: "ctrl+f", onSelect: () => { ... } },
-  //   ]);
-  //
-  // Deferred: keybind handlers need the management panel modal (api.ui.dialog.replace)
-  // wired to a real task detail view. Scope cap on Phase 13 — will be Phase 13.5.
-  // -------------------------------------------------------------------------
 
   logger.info("TUI plugin boot complete");
 };

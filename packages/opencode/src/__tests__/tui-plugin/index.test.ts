@@ -49,9 +49,16 @@ type MockTuiLifecycle = {
   signal: AbortSignal;
 };
 
+type MockTuiCommandApi = {
+  register: ReturnType<typeof vi.fn>;
+  trigger: ReturnType<typeof vi.fn>;
+  show: ReturnType<typeof vi.fn>;
+};
+
 type MockTuiPluginApi = {
   slots: MockTuiSlots;
   lifecycle: MockTuiLifecycle;
+  command: MockTuiCommandApi;
   ui: {
     toast: ReturnType<typeof vi.fn>;
     dialog: {
@@ -86,6 +93,11 @@ function makeApi(): MockTuiPluginApi {
     lifecycle: {
       onDispose: vi.fn().mockReturnValue(() => undefined),
       signal: new AbortController().signal,
+    },
+    command: {
+      register: vi.fn().mockReturnValue(() => undefined),
+      trigger: vi.fn(),
+      show: vi.fn(),
     },
     ui: {
       toast: vi.fn(),
@@ -347,7 +359,44 @@ describe("tui() — reads registry when SharedPluginState is set", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. Zero stdout assertion
+// 7. api.command.register — keybinds (Phase 13.5)
+// ---------------------------------------------------------------------------
+
+describe("tui() — command.register (keybinds Phase 13.5)", () => {
+  it("calls api.command.register exactly once after boot", async () => {
+    const api = makeApi();
+    await tuiModule.tui(api as never, undefined, makeMeta() as never);
+
+    expect(api.command.register).toHaveBeenCalledTimes(1);
+  });
+
+  it("command.register callback returns an array with 3 entries", async () => {
+    const api = makeApi();
+    await tuiModule.tui(api as never, undefined, makeMeta() as never);
+
+    const [cb] = api.command.register.mock.calls[0] as [() => { title: string; keybind?: string }[]];
+    const cmds = cb();
+
+    expect(Array.isArray(cmds)).toBe(true);
+    expect(cmds).toHaveLength(3);
+  });
+
+  it("command.register callback returns commands with ctrl+b, ctrl+f, down keybinds", async () => {
+    const api = makeApi();
+    await tuiModule.tui(api as never, undefined, makeMeta() as never);
+
+    const [cb] = api.command.register.mock.calls[0] as [() => { title: string; keybind?: string }[]];
+    const cmds = cb();
+    const keybinds = cmds.map((c) => c.keybind);
+
+    expect(keybinds).toContain("ctrl+b");
+    expect(keybinds).toContain("ctrl+f");
+    expect(keybinds).toContain("down");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Zero stdout assertion
 // ---------------------------------------------------------------------------
 
 describe("tui() — zero stdout pollution", () => {
