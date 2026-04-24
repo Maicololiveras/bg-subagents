@@ -11,10 +11,12 @@
  * `TaskRegistry.onComplete` inside `buildV14Hooks`. The event hook is
  * pure observability.
  *
+ * Phase 7.5.5: Zero-pollution stdout-capture tests added below.
+ *
  * Spec: openspec/changes/opencode-plan-review-live-control/specs/host-compat/spec.md
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildV14EventHandler } from "../../../host-compat/v14/event-handler.js";
 
@@ -128,5 +130,67 @@ describe("buildV14EventHandler — noisy events ignored", () => {
 
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7.5.5 — Zero-pollution stdout-capture tests
+//
+// Hard constraint: the event handler MUST NOT write anything to stdout
+// regardless of what events are processed. Stdout is reserved exclusively
+// for user-visible markdown cards via client.session.prompt.
+// ---------------------------------------------------------------------------
+
+describe("buildV14EventHandler — zero stdout pollution (Phase 7.5.5)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("produces ZERO bytes on stdout when BG_SUBAGENTS_DEBUG is unset (session.idle)", async () => {
+    delete process.env["BG_SUBAGENTS_DEBUG"];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const logger = makeLogger();
+    const handle = buildV14EventHandler({ logger: logger as never });
+
+    await handle({
+      event: {
+        type: "session.idle",
+        properties: { sessionID: "sess_zero_pollution" },
+      } as never,
+    });
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("produces ZERO bytes on stdout when processing session.error", async () => {
+    delete process.env["BG_SUBAGENTS_DEBUG"];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const logger = makeLogger();
+    const handle = buildV14EventHandler({ logger: logger as never });
+
+    await handle({
+      event: {
+        type: "session.error",
+        properties: { sessionID: "sess_err_zero", error: "boom" },
+      } as never,
+    });
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("produces ZERO bytes on stdout for unknown/noisy events", async () => {
+    delete process.env["BG_SUBAGENTS_DEBUG"];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const logger = makeLogger();
+    const handle = buildV14EventHandler({ logger: logger as never });
+
+    await handle({
+      event: {
+        type: "message.part.updated",
+        properties: { delta: "hello" },
+      } as never,
+    });
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
   });
 });

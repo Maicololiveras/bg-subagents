@@ -11,7 +11,7 @@
  * Spec: openspec/changes/opencode-plan-review-live-control/specs/delivery/spec.md
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createV14Delivery } from "../../../host-compat/v14/delivery.js";
 import { TaskRegistry } from "@maicolextic/bg-subagents-core";
@@ -330,5 +330,57 @@ describe("createV14Delivery — dispose", () => {
     });
 
     expect(() => coord.dispose()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7.5.7 — Zero-pollution stdout-capture tests for delivery coordinator
+// ---------------------------------------------------------------------------
+
+describe("createV14Delivery — zero stdout pollution (Phase 7.5.7)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("produces ZERO stdout bytes during a full primary+success delivery cycle", async () => {
+    delete process.env["BG_SUBAGENTS_DEBUG"];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const registry = new TaskRegistry();
+    const { client } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_zero_poll",
+      logger: mkLogger() as never,
+    });
+
+    await coord.onComplete(mkCompletion("tsk_no_stdout"));
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("produces ZERO stdout bytes during a primary-failure delivery cycle", async () => {
+    delete process.env["BG_SUBAGENTS_DEBUG"];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const registry = new TaskRegistry();
+    const { client } = mkClient({
+      promptImpl: async () => { throw new Error("network down"); },
+    });
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_fail_zero",
+      logger: mkLogger() as never,
+    });
+
+    await coord.onComplete(mkCompletion("tsk_fail_no_stdout"));
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
   });
 });

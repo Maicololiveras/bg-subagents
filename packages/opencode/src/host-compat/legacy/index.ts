@@ -63,7 +63,7 @@ export async function buildLegacyHooks(
   ctx: PluginServerContext,
   overrides: BuildLegacyHooksOverrides = {},
 ): Promise<Hooks> {
-  const logger: Logger = overrides.logger ?? createLogger({});
+  const logger: Logger = overrides.logger ?? createLogger("legacy:boot");
   const sessionId = ctx.session_id ?? "session_unknown";
 
   const history =

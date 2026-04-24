@@ -45,7 +45,7 @@ export async function buildServer(
 
 const pluginModule: PluginModule = {
   async server(ctx: PluginServerContext): Promise<Hooks> {
-    const logger = createLogger({});
+    const logger = createLogger("plugin:router");
     const version = detectHostVersion(ctx, { logger });
     if (version === "v14") {
       logger.info("host-compat:routed", { version });

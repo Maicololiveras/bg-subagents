@@ -106,7 +106,7 @@ describe("registerTaskBgTool", () => {
     const tool = registerTaskBgTool({
       registry,
       run: async () => "x",
-      logger: createLogger({}),
+      logger: createLogger("legacy:tool-register-test"),
     });
     const result = (await tool.execute(
       {

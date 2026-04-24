@@ -81,7 +81,7 @@ export async function buildV14Hooks(
     output: { system: string[] },
   ) => Promise<void>;
 }> {
-  const logger: Logger = overrides.logger ?? createLogger({});
+  const logger: Logger = overrides.logger ?? createLogger("v14:boot");
   const sessionID = overrides.sessionID ?? "session_unknown";
 
   const history =

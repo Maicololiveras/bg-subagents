@@ -14,7 +14,7 @@
  * Spec: openspec/changes/opencode-plan-review-live-control/specs/host-compat/spec.md
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildV14Hooks } from "../../../host-compat/v14/index.js";
 
@@ -142,5 +142,25 @@ describe("buildV14Hooks — Phase 7 hooks wired", () => {
 
     expect(output.system).toHaveLength(1);
     expect(output.system[0]).toContain("task_bg");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7.5.6 — Zero-pollution stdout-capture test for buildV14Hooks
+// ---------------------------------------------------------------------------
+
+describe("buildV14Hooks — zero stdout pollution (Phase 7.5.6)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("buildV14Hooks produces ZERO bytes on stdout when BG_SUBAGENTS_DEBUG is unset", async () => {
+    delete process.env["BG_SUBAGENTS_DEBUG"];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const input = makeV14Input();
+    await buildV14Hooks(input as never);
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
   });
 });
