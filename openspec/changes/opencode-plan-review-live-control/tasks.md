@@ -152,35 +152,36 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 
 ---
 
-## Phase 11: TUI Plugin — Shared State — DROPPED
+## Phase 11: TUI Plugin — Shared State — RESCUED (ADR-9, 2026-04-24)
 
-> ~~All tasks in this phase dropped per ADR-8 (Plan D pivot — v1.0 is server-side only, no TUI plugin).~~
+> **RESCUED 2026-04-24 per ADR-9 (v1.0 scope expansion).** TUI loader confirmed functional via `tui.json` in OpenCode 1.14.23+. SharedPluginState is required so the TUI plugin can read TaskRegistry and PolicyStore from the server plugin without HTTP round-trips. Pattern: `globalThis[Symbol.for("@maicolextic/bg-subagents/shared")]` — see design.md "SharedPluginState — Symbol.for globalThis pattern".
 
-- ~~[ ] 11.1 **RED: Write `SharedPluginState` singleton tests**.~~ ~~Dropped per ADR-8 — no TUI plugin in v1.0.~~
-- ~~[ ] 11.2 **GREEN: Implement `tui-plugin/shared-state.ts`**.~~ ~~Dropped per ADR-8 — no TUI plugin in v1.0.~~
-- ~~[ ] 11.3 **Integrate: call `SharedPluginState.registerFromServer` from `buildV14Hooks`**.~~ ~~Dropped per ADR-8 — no TUI plugin in v1.0.~~
+- [ ] 11.1 **RED: Write `SharedPluginState` singleton tests**. Assert: (a) server plugin sets state at boot via `Symbol.for("@maicolextic/bg-subagents/shared")` on globalThis; (b) TUI plugin reads the same state object via the same symbol; (c) mutations to registry from server side are visible in TUI side immediately (same process, same reference); (d) missing state (pre-boot read) is handled gracefully (returns null, no throw). (Files: `packages/opencode/src/__tests__/tui-plugin/shared-state.test.ts`)
+- [ ] 11.2 **GREEN: Implement `tui-plugin/shared-state.ts`**. Exports `setSharedState(state: SharedPluginState): void` (called by server plugin at boot) and `getSharedState(): SharedPluginState | null` (called by TUI plugin at boot). Uses `Symbol.for("@maicolextic/bg-subagents/shared")` on globalThis. `SharedPluginState` type: `{ registry: TaskRegistry; policyStore: TaskPolicyStore }`. (Files: `packages/opencode/src/tui-plugin/shared-state.ts`)
+- [ ] 11.3 **Integrate: call `setSharedState` from `buildV14Hooks`**. After constructing `taskRegistry` and `policyStore` in the server plugin boot, call `setSharedState({ registry: taskRegistry, policyStore })` so TUI plugin can read them. Add assertion to `build.test.ts` that shared state is set after `buildV14Hooks` resolves. (Files: `packages/opencode/src/host-compat/v14/index.ts`, `packages/opencode/src/__tests__/host-compat/v14/build.test.ts`)
 
 ---
 
-## Phase 12: Live Control + Commands (server-side, post-ADR-8 pivot)
+## Phase 12: Live Control + Commands (server-side + TUI — ADR-9 scope)
 
-- ~~[ ] 12.1 **RED: Write `plan-review-dialog.test.ts`**~~ ~~Dropped per ADR-8 — TUI DialogSelect not available in v1.0.~~
-- ~~[ ] 12.2 **GREEN: Implement `tui-plugin/plan-review-dialog.ts`**~~ ~~Dropped per ADR-8 — TUI DialogSelect not available in v1.0.~~
+- [ ] 12.1 **RED: Write `plan-review-dialog.test.ts`**. RESCUED per ADR-9 — TUI DialogSelect IS available via `tui.json` in OpenCode 1.14.23+. Write tests asserting: (a) when a multi-delegation turn occurs (2+ task calls detected), the TUI plugin triggers `api.ui.DialogSelect` with per-task options (BG/FG); (b) dialog result is written back to SharedPluginState so the next `messages.transform` invocation picks up the user decision; (c) if dialog is dismissed, PolicyResolver default applies (no deadlock). Note: this COMPLEMENTS the PolicyResolver path — DialogSelect is the interactive overlay for TUI users; PolicyResolver is the silent fallback for headless/server-only runs. (Files: `packages/opencode/src/__tests__/tui-plugin/plan-review-dialog.test.ts`)
+- [ ] 12.2 **GREEN: Implement `tui-plugin/plan-review-dialog.ts`**. RESCUED per ADR-9. TUI-native plan review dialog using `api.ui.DialogSelect`. Triggered by the TUI plugin when it detects a pending multi-delegation decision in SharedPluginState. User picks BG/FG per task entry; result written to SharedPluginState. `messages.transform` interceptor reads user decision (with timeout fallback to PolicyResolver). Zero impact on server-only users who don't load `tui.json`. (Files: `packages/opencode/src/tui-plugin/plan-review-dialog.ts`)
 - [x] 12.3 **RED: Write `slash-commands.test.ts`**. Mock server-side message hook; assert `/task move-bg <id>` pattern detected, correct task resolved from registry, cancel+re-spawn flow triggered. Based on `live-control/spec.md` scenarios. (Files: `packages/opencode/src/__tests__/slash-commands/task-move-bg.test.ts`)
 - [x] 12.4 **GREEN: Implement `host-compat/v14/slash-commands.ts`**. Server-side interceptor for `/task move-bg <id>`. Queries `TaskRegistry` directly; no shared-state singleton needed. Uses `createLogger("v14:task-move-bg")`. (Files: `packages/opencode/src/host-compat/v14/slash-commands.ts`)
 - [x] 12.5 **RED: Write remaining slash command tests**. Cover `/task list`, `/task show`, `/task logs`, `/task kill`. Same interceptor module as 12.3/12.4. Assert each pattern dispatches correct registry call and returns formatted text response. (Files: `packages/opencode/src/__tests__/slash-commands/task-read-commands.test.ts` — 30 tests)
 - [x] 12.6 **GREEN: Extend `slash-commands.ts` with list/show/logs/kill handlers**. All 5 slash commands share the same server-side message interception mechanism established in 12.3/12.4. Exports: `interceptTaskListCommand`, `interceptTaskShowCommand`, `interceptTaskLogsCommand`, `interceptTaskKillCommand`, `interceptTaskCommand` dispatcher. (Files: `packages/opencode/src/host-compat/v14/slash-commands.ts`)
-- ~~[ ] 12.7 **Optional: Implement sidebar slot**~~ ~~Dropped per ADR-8 — no `api.slots.register` in v1.0 (TUI plugin dropped).~~
+- [ ] 12.7 **Implement sidebar slot**. RESCUED per ADR-9. Register a `sidebar_content` slot via `api.slots.register` in the TUI plugin boot. Slot renders a live background task list reading from `SharedPluginState.registry`. Updates on a 1000ms polling interval (no push mechanism available in TUI slot API). Displays: task ID (truncated), agent name, status (running/completed/cancelled), elapsed time. (Files: `packages/opencode/src/tui-plugin/sidebar.ts`, `packages/opencode/src/tui-plugin/index.ts`)
 
 ---
 
-## Phase 13: TUI Plugin — Entry Point — DROPPED
+## Phase 13: TUI Plugin — Entry Point — RESCUED (ADR-9, 2026-04-24)
 
-> ~~All tasks in this phase dropped per ADR-8 (Plan D pivot — v1.0 is server-side only, no TUI plugin).~~
+> **RESCUED 2026-04-24 per ADR-9 (v1.0 scope expansion).** TUI entry point ships in v1.0 and is loaded via `tui.json`. Critical spike finding: the runtime requires `id: string` in the default export — ALWAYS include it despite `TuiPluginModule.id?: string` being typed as optional (type/runtime mismatch, see design.md Plugin Loader Contract section).
 
-- ~~[ ] 13.1 **RED: Write TUI plugin boot integration test**.~~ ~~Dropped per ADR-8 — no TUI plugin in v1.0.~~
-- ~~[ ] 13.2 **GREEN: Implement `tui-plugin/index.ts`**.~~ ~~Dropped per ADR-8 — no TUI plugin in v1.0.~~
-- ~~[ ] 13.3 **Add subpath export in `package.json`**.~~ ~~Dropped per ADR-8 — `./tui` subpath removed from exports. No build config changes for TUI dist.~~
+- [ ] 13.1 **RED: Write TUI plugin boot integration test**. RESCUED per ADR-9. Assert: (a) default export shape is `{ id: string, tui: TuiPlugin }` — `id` is present and non-empty; (b) TUI plugin boots without error when mocked `TuiPluginApi` is passed; (c) `getSharedState()` is called at boot and returns the state set by server plugin; (d) sidebar slot is registered via `api.slots.register`; (e) keybinds `Ctrl+B`, `Ctrl+F` registered via `TuiCommand.keybind`. (Files: `packages/opencode/src/__tests__/tui-plugin/boot.test.ts`)
+- [ ] 13.2 **GREEN: Implement `tui-plugin/index.ts`**. RESCUED per ADR-9. TUI plugin entry. Default export: `{ id: "bg-subagents-tui", tui: TuiPlugin }`. `id` REQUIRED — runtime throws `TypeError: Path plugin ... must export id` if missing (see spike finding). Boot sequence: read SharedPluginState, register sidebar slot (12.7), register keybinds (Ctrl+B, Ctrl+F, ↓), initialize plan-review-dialog listener (12.2). (Files: `packages/opencode/src/tui-plugin/index.ts`)
+- [ ] 13.3 **Add `./tui` subpath export in `packages/opencode/package.json`**. RESCUED per ADR-9. Add to `exports`: `"./tui": { "types": "./dist/tui-plugin/index.d.ts", "import": "./dist/tui-plugin/index.js" }`. Ensure `files` array in package.json includes `dist/tui-plugin/` so npm pack includes the TUI entry. Verify `tsconfig.json` compiles `tui-plugin/` to `dist/tui-plugin/`. (Files: `packages/opencode/package.json`)
+- [ ] 13.4 **Verify `./tui` subpath included in npm pack output**. Run `pnpm pack --dry-run` from `packages/opencode/`. Assert `dist/tui-plugin/index.js` and `dist/tui-plugin/index.d.ts` appear in the file list. (Files: verification step only)
 
 ---
 
@@ -203,6 +204,8 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 - [ ] 15.5 **Update `docs/upstream/gentle-ai-pr.md`**. Reference v1.0 feature list. Include placeholder for demo capture link. Clear install instructions for Gentleman. (Files: `docs/upstream/gentle-ai-pr.md`)
 - [ ] 15.6 **Update root `README.md` if referenced version numbers**. Ensure badge/links point to v1.0+. (Files: `README.md`)
 - [ ] 15.7 **Update `CHANGELOG.md` via changeset**. Create a major bump changeset for `bg-subagents-opencode` explaining the breaking changes + new features. (Files: new `.changeset/*.md`)
+- [ ] 15.8 **Fix SKILL.md alignment with gentle-ai conventions**. Add YAML front-matter to `docs/skills/bg-subagents/SKILL.md` (follows gentle-ai skill format). Correct `config.json` reference to `opencode.json` (flagged during Agent X gentle-ai PR research). Add TUI install section documenting `tui.json`. (Files: `docs/skills/bg-subagents/SKILL.md`)
+- [ ] 15.9 **Draft OpenCode docs PR for `tui.json` documentation**. Target file in upstream: `packages/web/src/content/docs/plugins.mdx` in anomalyco/opencode. Content plan documented in `docs/upstream/opencode-docs-pr.md`. This task is to write the draft PR body + proposed mdx changes locally (not yet opened upstream — that is Phase 18 territory or a new phase). (Files: `docs/upstream/opencode-docs-pr.md` update + draft mdx snippet)
 
 ---
 
@@ -266,10 +269,12 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 > **OQ-1 resolution (Candidate 7, 2026-04-24)**: Phase 8 restructured — 8.1/8.2/8.5/8.6/8.7/8.8 (batch-detector + picker + clack + non-TTY) all dropped; 8.3/8.4 (rewrite-parts) scope-updated; new 8.5/8.6 (PolicyResolver batch) + 8.7/8.8 (/task policy slash command) added. Net Phase 8: 8 active → 6 active (4 dropped as strikethrough, 4 replaced by new tasks = same 8 slots, but 4 are ~~struck~~). Phase 9: 9.3/9.4 dropped. Net change: −4 tasks (8.1/8.2 dropped, 8.5/8.6/8.7/8.8 replaced in-place, 9.3/9.4 dropped = net −2 from Phase 9). Total: 94 → 90 active.
 >
 > **Zero-pollution constraint (2026-04-24)**: New Phase 7.5 (9 tasks) adds centralized logger + stdout sweep across all plugin files. New task 16.9 adds a zero-pollution smoke test as a hard release gate for Phase 16. Task count: 90 → 100 active.
+>
+> **ADR-9 scope expansion (2026-04-24)**: TUI loader confirmed via `tui.json` in OpenCode 1.14.23+. Phase 11 RESCUED (3 tasks — SharedPluginState via Symbol.for globalThis), Phase 12.1/12.2 RESCUED (TUI DialogSelect plan review dialog — additive, complements PolicyResolver), Phase 12.7 RESCUED (sidebar slot via api.slots.register), Phase 13 RESCUED (4 tasks — TUI entry point + `id` requirement + `./tui` subpath export + pack verification). New Phase 15 tasks: 15.8 (SKILL.md gentle-ai alignment) + 15.9 (OpenCode docs PR draft for tui.json). Net: +9 rescued + +2 new = +11 tasks. Task count: 100 → 111 active.
 
 | Phase | Tasks (active) | Focus |
 |---|---|---|
-| 1 | 6 (1 resolved as closed) | Verification spikes (resolve 6 open questions — TQ-1 now closed NO-GO) |
+| 1 | 6 (1 resolved as closed) | Verification spikes (resolve 6 open questions — TQ-1 now re-resolved GO via tui.json) |
 | 2 | 11 | Structural foundation (mechanical moves, preserve legacy) |
 | 3 | 3 | Host version detection |
 | 4 | 4 | Legacy hooks builder (wrap existing) |
@@ -280,16 +285,16 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 | 8 | 6 | Plan Review core (PolicyResolver batch + /task policy + rewrite-parts) — OQ-1 resolved |
 | 9 | 3 | v14 Plan Review implementation (messages.transform only; batching-fallback dropped) — OQ-1 resolved |
 | 10 | 4 | v14 Hooks builder (wiring) |
-| 11 | 0 | ~~TUI Plugin shared state~~ — DROPPED (ADR-8) |
-| 12 | 4 | Server-side slash command interception (Live Control, post-pivot) |
-| 13 | 0 | ~~TUI Plugin entry point~~ — DROPPED (ADR-8) |
+| 11 | 3 | TUI Plugin shared state — RESCUED (ADR-9): Symbol.for globalThis pattern |
+| 12 | 7 | Server-side slash commands + TUI plan-review-dialog + sidebar slot — ADR-9 expands scope |
+| 13 | 4 | TUI Plugin entry point — RESCUED (ADR-9): `id` required, `./tui` subpath, pack verify |
 | 14 | 5 | Integration & E2E tests |
-| 15 | 7 | Documentation (no TUI install instructions) |
-| 16 | 9 | Manual E2E validation (single plugin entry, slash command + PolicyResolver + zero-pollution gate) |
+| 15 | 9 | Documentation (TUI install via tui.json + SKILL.md fix + OpenCode docs PR) |
+| 16 | 9 | Manual E2E validation (full TUI UX: sidebar, Ctrl+B, modals + zero-pollution gate) |
 | 17 | 7 | Release v1.0.0 |
 | 18 | 6 | Upstream PR to Gentle-AI |
 | 19 | 3 | Archive & wrap |
-| **TOTAL** | **100** | (was 90 — zero-pollution adds Phase 7.5 +9 tasks + task 16.9 = +10) |
+| **TOTAL** | **111** | (was 100 — ADR-9 rescued 9 tasks + 2 new Phase 15 tasks = +11) |
 
 ## Implementation Order Rationale
 
@@ -299,9 +304,9 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 - **Phases 5–10 build v14 features** — bottom-up: primitives → core → builder.
 - **Phase 7.5 BEFORE Phase 8** — the centralized logger must exist before any new v14 modules (Phase 8+) are written, so they can import `createLogger` from the start instead of using `console.log` that then needs to be swept again. The stdout sweep tasks (7.5.5–7.5.8) fix existing files written in Phases 7 and earlier. Phase 7.5 is a hard prerequisite for the zero-pollution constraint — all subsequent phases inherit the no-stdout discipline automatically. Task 16.9 (zero-pollution smoke test) validates this end-to-end before publish; it blocks release if any assertion fails.
 - **Phase 8 before Phase 9** — PolicyResolver batch mode (8.5/8.6) and `/task policy` slash command (8.7/8.8) must exist before `messages-transform.ts` (9.2) calls `resolveBatch`. Note: 8.7/8.8 reference `slash-commands.ts` from Phase 12 — coordinate dependency; the test file can be created in Phase 8 even if the implementation module is finalized in Phase 12.
-- **Phase 11 DROPPED** (ADR-8 — no TUI plugin in v1.0).
-- **Phase 12 server-side slash commands** — replaces TUI Live Control. Depends on Phase 10 (v14 hooks builder). `/task policy` command (Phase 8.7/8.8) shares the same interceptor module as Phase 12 — ensure Phase 12 goes first or they land in the same batch.
-- **Phase 13 DROPPED** (ADR-8 — no TUI plugin in v1.0).
+- **Phase 11 RESCUED** (ADR-9 — SharedPluginState via Symbol.for globalThis). Depends on Phase 10 (v14 hooks builder must exist to call `setSharedState` from `buildV14Hooks`). Phase 11 MUST come before Phase 13 (TUI entry point reads shared state at boot).
+- **Phase 12 server-side slash commands + TUI commands** — 12.3–12.6 depend on Phase 10 (v14 hooks builder). 12.1/12.2 (TUI DialogSelect plan-review-dialog) depend on Phase 11 (SharedPluginState) and Phase 13 (TUI entry point). 12.7 (sidebar slot) depends on Phase 11 + Phase 13. Apply 12.3–12.6 in Phase 12's first batch; 12.1/12.2/12.7 in a second batch after Phase 13 completes.
+- **Phase 13 RESCUED** (ADR-9 — TUI entry point). Depends on Phase 11 (shared-state.ts must exist). `id: string` is REQUIRED in default export — runtime throws without it. Apply Phase 13 before Phase 12.1/12.2/12.7.
 - **Phases 14–15 integration + docs** — depend on completion of features. Docs updated for PolicyResolver + slash command UX (no picker mention).
 - **Phase 16 manual E2E** — gate before publish. Validates policy config, `/task policy` override, `/task move-bg`, no picker appearing, AND zero-pollution (task 16.9 is a hard release block — no JSON blobs, no raw event dumps allowed in TUI output).
 - **Phase 17 release** — auto via CI.
