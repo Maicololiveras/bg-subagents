@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>bg-subagents — BG vs FG · Interactive Presentation</title>
+  <style>
+    html, body, #root { height: 100%; margin: 0; background: #020617; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const { useEffect, useMemo, useState } = React;
+
+    /**
+     * Presentación interactiva — BG vs FG sub-agents
+     *
+     * Documentación visual del diseño de `@maicolextic/bg-subagents-opencode` para
+     * el upstream `Gentleman-Programming/gentle-ai`. Explica el modelo de
+     * interacción (BG/FG), el control en cascada (policy → session override →
+     * post-spawn override) y la estrategia visual v1.0 (chat-based cards) vs
+     * v1.1+ (sidebar + keybinds cuando OpenCode exponga un loader TUI público).
+     *
+     * Versión autosuficiente:
+     * - Solo usa React.
+     * - No importa lucide-react, framer-motion, recharts ni otros paquetes.
+     * - Los íconos son SVG inline.
+     * - Los strings multilínea usan template literals seguros.
+     * - Incluye sanity checks para prevenir errores silenciosos.
+     *
+     * Para un preview sin build, abrí el HTML hermano `bg-vs-fg-interactive.html`
+     * en el navegador — transpila este módulo con Babel Standalone.
+     */
+
+    const deck = [
+      {
+        id: "cover",
+        eyebrow: "bg-subagents · demo visual",
+        title: "Cómo se vería el flujo BG vs FG",
+        subtitle:
+          "Una presentación interactiva con ejemplos paso a paso: policy default, override por turno, mover tareas y visual v1.0/v1.1.",
+        type: "cover",
+      },
+      {
+        id: "mental-model",
+        eyebrow: "1 · Modelo mental",
+        title: "Un prompt puede delegar varios sub-agentes",
+        subtitle:
+          "El LLM puede disparar varias task tool calls en un mismo turno. Cada una se convierte en un sub-agente con modo FG o BG.",
+        type: "mental",
+      },
+      {
+        id: "control-cascade",
+        eyebrow: "2 · Control en cascada",
+        title: "Tres niveles para decidir BG o FG",
+        subtitle:
+          "Primero manda la policy estática. Luego puedes forzar el próximo turno. Finalmente puedes mover una task ya lanzada.",
+        type: "cascade",
+      },
+      {
+        id: "flow",
+        eyebrow: "3 · Ejemplo paso a paso",
+        title: "Implementar auth con JWT",
+        subtitle:
+          "Simulación de un turno real: explorar, diseñar y escribir spec con distintos modos de ejecución.",
+        type: "flow",
+      },
+      {
+        id: "v10",
+        eyebrow: "4 · v1.0 ahora",
+        title: "Cards markdown dentro del chat",
+        subtitle:
+          "Sin sidebar ni keybinds, pero limpio: cada task aparece como card con estado, duración, ID y comandos útiles.",
+        type: "v10",
+      },
+      {
+        id: "v11",
+        eyebrow: "5 · v1.1 futuro",
+        title: "Sidebar TUI con foco BG/FG",
+        subtitle:
+          "Cuando OpenCode exponga el loader TUI, la experiencia puede pasar a ventanitas, Ctrl+B, Ctrl+F y modales vivos.",
+        type: "v11",
+      },
+      {
+        id: "decision",
+        eyebrow: "6 · Cierre",
+        title: "Qué queda validado",
+        subtitle:
+          "v1.0 prioriza claridad y shipping realista; v1.1 reserva la experiencia completa con sidebar y keybinds.",
+        type: "decision",
+      },
+    ];
+
+    const flowSteps = [
+      {
+        label: "Paso 1",
+        title: "Usas la policy default",
+        command: "/task policy default",
+        explanation:
+          "El sistema vuelve a la configuración base: sdd-explore en BG, sdd-design en FG, sdd-spec en BG.",
+        terminal: [
+          "✓ Task policy: default",
+          "Policy activa desde bg-subagents.config",
+          "sdd-explore → background",
+          "sdd-design  → foreground",
+          "sdd-spec    → background",
+        ],
+      },
+      {
+        label: "Paso 2",
+        title: "Pides una tarea compuesta",
+        command: "Investigá patrones de auth, diseñá middleware JWT y escribí el spec",
+        explanation:
+          "El LLM divide la intención en tres delegaciones: explorar codebase, diseñar middleware y documentar el spec.",
+        terminal: [
+          "[LLM] Delegando 3 sub-agentes según policy...",
+          "→ sdd-explore  policy BG  registry task_bg_1a2b",
+          "→ sdd-design   policy FG  active   task_fg_3c4d",
+          "→ sdd-spec     policy BG  registry task_bg_5e6f",
+        ],
+      },
+      {
+        label: "Paso 3",
+        title: "El FG bloquea y streamea",
+        command: "sdd-design está en Foreground",
+        explanation:
+          "Como el diseño requiere reacción inmediata, ocupa el chat principal y muestra progreso en tiempo real.",
+        terminal: [
+          "🔵 FG sdd-design task_fg_3c4d running 0m45s",
+          "▸ Reading src/auth/middleware.ts",
+          "▸ Analyzing JWT libraries...",
+          "▸ Drafting middleware boundaries...",
+        ],
+      },
+      {
+        label: "Paso 4",
+        title: "El chat queda libre con BG corriendo",
+        command: "/task list",
+        explanation:
+          "Cuando termina el FG, puedes seguir chateando mientras sdd-explore y sdd-spec continúan en Background.",
+        terminal: [
+          "╭─ Active tasks ─────────────────────────────╮",
+          "│ 🟡 BG task_bg_1a2b sdd-explore 1m23s running │",
+          "│ 🟡 BG task_bg_5e6f sdd-spec    0m45s running │",
+          "│ Total: 2 running · 0 failed                 │",
+          "╰────────────────────────────────────────────╯",
+        ],
+      },
+      {
+        label: "Paso 5",
+        title: "Un BG termina y publica completion",
+        command: "completion message automático",
+        explanation:
+          "Cuando una tarea BG finaliza, aparece un mensaje nuevo con resumen y comando para ver el output completo.",
+        terminal: [
+          "╭────────────────────────────────────────────╮",
+          "│ ✅ BG sdd-explore task_bg_1a2b done 2m45s   │",
+          "│                                            │",
+          "│ Resumen: JWT encontrado en 3 referencias. │",
+          "│ Output completo: /task show task_bg_1a2b   │",
+          "╰────────────────────────────────────────────╯",
+        ],
+      },
+    ];
+
+    const cascade = [
+      {
+        level: "Nivel 1",
+        title: "Policy por defecto",
+        command: "bg-subagents.config",
+        detail: "Configuras una vez qué tipo de agente va a BG o FG por default.",
+        sample: [
+          '"sdd-explore": "background"',
+          '"sdd-design":  "foreground"',
+          '"sdd-spec":    "background"',
+        ],
+      },
+      {
+        level: "Nivel 2",
+        title: "Override por sesión",
+        command: "/task policy bg",
+        detail: "Fuerza todas las delegaciones del próximo turno a BG, FG o default.",
+        sample: ["/task policy bg", "✓ All tasks this turn will run in BG."],
+      },
+      {
+        level: "Nivel 3",
+        title: "Override post-spawn",
+        command: "/task move-bg <id>",
+        detail: "Si una tarea arrancó en FG y quieres liberar el chat, la relanzas en BG con el mismo prompt.",
+        sample: ["/task move-bg task_fg_3c4d", "✓ Cancelled in FG and re-spawned in BG."],
+      },
+    ];
+
+    const v10Cards = [
+      {
+        mode: "BG",
+        color: "yellow",
+        status: "running",
+        agent: "sdd-explore",
+        id: "task_bg_1a2b",
+        time: "1m23s",
+        body: "Investigando patrones de auth en el codebase...",
+        footer: "/task show task_bg_1a2b · /task logs task_bg_1a2b",
+      },
+      {
+        mode: "FG",
+        color: "blue",
+        status: "running",
+        agent: "sdd-design",
+        id: "task_fg_3c4d",
+        time: "0m45s",
+        body: `▸ Reading src/auth/middleware.ts
+▸ Analyzing JWT libraries...
+▸ Designing middleware boundaries...`,
+        footer: "stream en tiempo real dentro del chat principal",
+      },
+      {
+        mode: "BG",
+        color: "green",
+        status: "done",
+        agent: "sdd-spec",
+        id: "task_bg_5e6f",
+        time: "2m10s",
+        body: "Spec generado con endpoints, errores esperados y flujo de validación.",
+        footer: "Output completo: /task show task_bg_5e6f",
+      },
+    ];
+
+    function runSanityChecks() {
+      const allowedSlideTypes = new Set(["cover", "mental", "cascade", "flow", "v10", "v11", "decision"]);
+      const allowedTaskModes = new Set(["BG", "FG"]);
+      const allowedTaskColors = new Set(["yellow", "blue", "green"]);
+
+      if (!Array.isArray(deck) || deck.length < 3) {
+        throw new Error("Deck inválido: debe tener varias slides.");
+      }
+
+      const deckIds = new Set();
+      deck.forEach((slide, index) => {
+        if (!slide.id || !slide.title || !slide.type) {
+          throw new Error(`Slide inválida en índice ${index}: falta id, title o type.`);
+        }
+        if (deckIds.has(slide.id)) {
+          throw new Error(`Slide inválida: id duplicado '${slide.id}'.`);
+        }
+        if (!allowedSlideTypes.has(slide.type)) {
+          throw new Error(`Slide inválida '${slide.id}': type no soportado '${slide.type}'.`);
+        }
+        deckIds.add(slide.id);
+      });
+
+      if (!Array.isArray(flowSteps) || flowSteps.length < 3) {
+        throw new Error("Flow inválido: se esperaban pasos suficientes para la demo.");
+      }
+
+      flowSteps.forEach((step, index) => {
+        if (!step.title || !step.command || !Array.isArray(step.terminal)) {
+          throw new Error(`Paso inválido en índice ${index}: falta title, command o terminal.`);
+        }
+        if (step.terminal.length === 0) {
+          throw new Error(`Paso inválido en índice ${index}: terminal no puede estar vacío.`);
+        }
+      });
+
+      if (!Array.isArray(cascade) || cascade.length !== 3) {
+        throw new Error("Cascade inválido: deben existir exactamente tres niveles de control.");
+      }
+
+      cascade.forEach((entry, index) => {
+        if (!entry.level || !entry.title || !entry.command || !Array.isArray(entry.sample)) {
+          throw new Error(`Cascade inválido en índice ${index}: falta level, title, command o sample.`);
+        }
+      });
+
+      if (!Array.isArray(v10Cards) || v10Cards.length === 0) {
+        throw new Error("v10Cards inválido: debe tener al menos una card.");
+      }
+
+      v10Cards.forEach((card, index) => {
+        if (!allowedTaskModes.has(card.mode)) {
+          throw new Error(`v10Cards[${index}] inválido: mode debe ser BG o FG.`);
+        }
+        if (!allowedTaskColors.has(card.color)) {
+          throw new Error(`v10Cards[${index}] inválido: color no soportado '${card.color}'.`);
+        }
+        if (!card.agent || !card.id || !card.status || !card.time || typeof card.body !== "string") {
+          throw new Error(`v10Cards[${index}] inválido: faltan campos obligatorios.`);
+        }
+      });
+    }
+
+    function SvgIcon({ name }) {
+      const common = {
+        width: "1em",
+        height: "1em",
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 1.8,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": true,
+      };
+
+      if (name === "left") {
+        return (
+          <svg {...common}>
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        );
+      }
+
+      if (name === "right") {
+        return (
+          <svg {...common}>
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        );
+      }
+
+      if (name === "layers") {
+        return (
+          <svg {...common}>
+            <path d="M12 3l9 5-9 5-9-5 9-5z" />
+            <path d="M3 12l9 5 9-5" />
+            <path d="M3 16l9 5 9-5" />
+          </svg>
+        );
+      }
+
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8" />
+        </svg>
+      );
+    }
+
+    function TerminalBlock({ lines }) {
+      return (
+        <div className="terminal" role="region" aria-label="Terminal simulada">
+          {lines.map((line, index) => (
+            <div key={`${line}-${index}`} className="terminal-line">
+              <span className="terminal-prompt">{index === 0 ? "›" : " "}</span>
+              <span>{line}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function TaskCard({ card, selected, onClick }) {
+      const colorClass = `task-${card.color}`;
+      const symbol = card.color === "yellow" ? "🟡" : card.color === "blue" ? "🔵" : "✅";
+
+      return (
+        <button
+          className={`task-card ${colorClass} ${selected ? "selected" : ""}`}
+          onClick={onClick}
+          type="button"
+          aria-pressed={selected}
+        >
+          <div className="task-header">
+            <span className="task-mode">
+              {symbol} {card.mode}
+            </span>
+            <span className="task-agent">{card.agent}</span>
+            <span className="task-id">{card.id}</span>
+            <span className="task-status">
+              {card.status} · {card.time}
+            </span>
+          </div>
+          <pre className="task-body">{card.body}</pre>
+          <div className="task-footer">{card.footer}</div>
+        </button>
+      );
+    }
+
+    function CoverSlide() {
+      return (
+        <div className="cover-grid">
+          <div className="hero-copy">
+            <div className="big-icon">
+              <SvgIcon name="layers" />
+            </div>
+            <h2>Una demo para visualizar cómo se controla cada sub-agente</h2>
+            <p>
+              La idea es que el usuario entienda en segundos qué está bloqueando el chat, qué sigue corriendo de fondo y qué comandos puede usar.
+            </p>
+          </div>
+          <div className="mock-window large">
+            <div className="window-top" aria-hidden="true">
+              <span /> <span /> <span />
+            </div>
+            <TerminalBlock
+              lines={[
+                "> Investigá auth, diseñá middleware JWT y escribí el spec",
+                "Delegando 3 sub-agentes según policy...",
+                "🟡 BG sdd-explore  task_bg_1a2b  running",
+                "🔵 FG sdd-design   task_fg_3c4d  streaming",
+                "🟡 BG sdd-spec     task_bg_5e6f  running",
+              ]}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    function MentalSlide() {
+      return (
+        <div className="two-col">
+          <div className="explain-card">
+            <h3>FG — Foreground</h3>
+            <p>Bloquea el chat principal y streamea progreso. Útil cuando el resultado inmediato importa y vas a reaccionar.</p>
+            <div className="pill blue">Ejemplo: sdd-design</div>
+          </div>
+          <div className="explain-card">
+            <h3>BG — Background</h3>
+            <p>No bloquea el chat. Queda registrado internamente y avisa cuando termina. Útil para tareas largas y paralelizables.</p>
+            <div className="pill yellow">Ejemplo: sdd-explore</div>
+          </div>
+          <div className="wide-card">
+            <div className="flow-map">
+              <div className="node user">Prompt del usuario</div>
+              <div className="arrow">→</div>
+              <div className="node llm">LLM divide tarea</div>
+              <div className="arrow">→</div>
+              <div className="node bg">BG explore</div>
+              <div className="node fg">FG design</div>
+              <div className="node bg">BG spec</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function CascadeSlide() {
+      const [active, setActive] = useState(0);
+      const item = cascade[active];
+
+      return (
+        <div className="cascade-layout">
+          <div className="cascade-list">
+            {cascade.map((entry, index) => (
+              <button
+                key={entry.level}
+                type="button"
+                className={`cascade-step ${active === index ? "active" : ""}`}
+                onClick={() => setActive(index)}
+              >
+                <span>{entry.level}</span>
+                <strong>{entry.title}</strong>
+                <small>{entry.command}</small>
+              </button>
+            ))}
+          </div>
+          <div className="cascade-detail">
+            <p className="mini-label">{item.level}</p>
+            <h3>{item.title}</h3>
+            <p>{item.detail}</p>
+            <TerminalBlock lines={item.sample} />
+          </div>
+        </div>
+      );
+    }
+
+    function FlowSlide() {
+      const [step, setStep] = useState(0);
+      const current = flowSteps[step];
+
+      return (
+        <div className="flow-layout">
+          <div className="stepper" aria-label="Pasos de la demo">
+            {flowSteps.map((entry, index) => (
+              <button
+                key={entry.label}
+                type="button"
+                className={`step-dot ${index === step ? "active" : ""} ${index < step ? "done" : ""}`}
+                onClick={() => setStep(index)}
+                aria-label={`Ir a ${entry.label}`}
+              >
+                {index < step ? "✓" : index + 1}
+              </button>
+            ))}
+          </div>
+          <div className="step-card">
+            <p className="mini-label">{current.label}</p>
+            <h3>{current.title}</h3>
+            <code>{current.command}</code>
+            <p>{current.explanation}</p>
+            <TerminalBlock lines={current.terminal} />
+            <div className="step-actions">
+              <button type="button" onClick={() => setStep((s) => Math.max(0, s - 1))}>
+                Anterior paso
+              </button>
+              <button type="button" onClick={() => setStep((s) => Math.min(flowSteps.length - 1, s + 1))}>
+                Siguiente paso
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function V10Slide() {
+      const [selected, setSelected] = useState(1);
+      const card = v10Cards[selected];
+
+      return (
+        <div className="v10-layout">
+          <div className="chat-column">
+            <div className="chat-input">&gt; Investigá auth, diseñá middleware, escribí spec</div>
+            {v10Cards.map((entry, index) => (
+              <TaskCard key={entry.id} card={entry} selected={selected === index} onClick={() => setSelected(index)} />
+            ))}
+          </div>
+          <div className="side-note">
+            <p className="mini-label">Card seleccionada</p>
+            <h3>
+              {card.mode} · {card.agent}
+            </h3>
+            <p>
+              En v1.0 todo vive en el chat lineal. La limpieza visual sale de cards compactas, labels redundantes, IDs copiables y comandos útiles.
+            </p>
+            <ul>
+              <li>Estado visible: {card.status}</li>
+              <li>ID copiable: {card.id}</li>
+              <li>Tiempo visible: {card.time}</li>
+              <li>Acción sugerida: {card.footer}</li>
+            </ul>
+          </div>
+        </div>
+      );
+    }
+
+    function V11Slide() {
+      const [focus, setFocus] = useState("BG");
+
+      const title = focus === "FG" ? "Foreground actual" : focus === "DONE" ? "Task completada" : "Background más reciente";
+      const description =
+        focus === "FG"
+          ? "Ctrl+F abriría el FG actual con acciones B/K/L/Esc."
+          : focus === "DONE"
+            ? "Una task completada mostraría resumen, logs y output completo."
+            : "Ctrl+B abriría el BG más reciente con live logs y acciones F/K/L/Esc.";
+
+      return (
+        <div className="tui-shell">
+          <div className="tui-main">
+            <div className="tui-title">OpenCode</div>
+            <div className="chat-line">[chat principal del user]</div>
+            <div className="chat-line prompt">&gt; _</div>
+            <div className="fg-stream">[FG task streameando acá]</div>
+          </div>
+          <div className="tui-sidebar">
+            <div className="sidebar-section">▓ Foreground</div>
+            <button type="button" className={`mini-task ${focus === "FG" ? "active" : ""}`} onClick={() => setFocus("FG")}>
+              🔵 sdd-design
+              <br />
+              <small>task_fg_3c · 1m23s</small>
+              <br />
+              <kbd>Ctrl+F ↵</kbd>
+            </button>
+            <div className="sidebar-section">▓ Background</div>
+            <button type="button" className={`mini-task ${focus === "BG" ? "active" : ""}`} onClick={() => setFocus("BG")}>
+              🟡 sdd-explore
+              <br />
+              <small>1m40s · BG</small>
+              <br />
+              <kbd>Ctrl+B ↵</kbd>
+            </button>
+            <button type="button" className={`mini-task done ${focus === "DONE" ? "active" : ""}`} onClick={() => setFocus("DONE")}>
+              ✅ sdd-spec
+              <br />
+              <small>2m10s · done</small>
+            </button>
+          </div>
+          <div className="tui-footer">Ctrl+B focus BG · Ctrl+F focus FG · /task · Esc</div>
+          <div className="modal-preview">
+            <p className="mini-label">Vista modal simulada</p>
+            <h3>{title}</h3>
+            <p>{description}</p>
+          </div>
+        </div>
+      );
+    }
+
+    function DecisionSlide() {
+      return (
+        <div className="decision-grid">
+          <div className="decision-card good">
+            <h3>v1.0 se puede shippear ya</h3>
+            <p>Cards markdown, comandos slash, completion messages, separación clara BG/FG y sin hacks de TUI.</p>
+          </div>
+          <div className="decision-card future">
+            <h3>v1.1 guarda la visión completa</h3>
+            <p>Sidebar, ventanas por agente, Ctrl+B, Ctrl+F, modales y foco visual cuando el loader esté disponible.</p>
+          </div>
+          <div className="decision-card question">
+            <h3>Validación final</h3>
+            <p>La pregunta clave es si prefieres cards compactas con borde Unicode o una variante más minimalista de una línea por task.</p>
+          </div>
+        </div>
+      );
+    }
+
+    function SlideBody({ slide }) {
+      switch (slide.type) {
+        case "cover":
+          return <CoverSlide />;
+        case "mental":
+          return <MentalSlide />;
+        case "cascade":
+          return <CascadeSlide />;
+        case "flow":
+          return <FlowSlide />;
+        case "v10":
+          return <V10Slide />;
+        case "v11":
+          return <V11Slide />;
+        case "decision":
+          return <DecisionSlide />;
+        default:
+          return <div className="error-card">Slide no soportada: {slide.type}</div>;
+      }
+    }
+
+    const css = `
+:root {
+  color-scheme: dark;
+  --bg: #020617;
+  --panel: rgba(15, 23, 42, 0.78);
+  --panel-2: rgba(255, 255, 255, 0.055);
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --soft: #cbd5e1;
+  --sky: #38bdf8;
+  --yellow: #facc15;
+  --green: #34d399;
+  --red: #fb7185;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; }
+
+.page {
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at 20% 20%, rgba(56,189,248,.12), transparent 32%),
+              radial-gradient(circle at 80% 12%, rgba(168,85,247,.13), transparent 30%),
+              linear-gradient(180deg, #020617, #0f172a);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.glow { position: absolute; border-radius: 999px; filter: blur(70px); pointer-events: none; }
+.glow-a { width: 360px; height: 360px; background: rgba(56,189,248,.15); left: -90px; top: 120px; }
+.glow-b { width: 300px; height: 300px; background: rgba(52,211,153,.10); right: 40px; bottom: 30px; }
+
+.deck-shell {
+  width: min(1180px, calc(100% - 32px));
+  min-height: calc(100vh - 32px);
+  margin: 16px auto;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.deck-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 18px;
+  padding: 18px 6px 0;
+}
+
+.deck-kicker {
+  margin: 0 0 8px;
+  color: #7dd3fc;
+  text-transform: uppercase;
+  letter-spacing: .24em;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.deck-header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 4.15rem);
+  line-height: 1.02;
+  letter-spacing: -.05em;
+}
+
+.deck-subtitle {
+  max-width: 850px;
+  margin: 14px 0 0;
+  color: var(--soft);
+  font-size: clamp(1rem, 1.35vw, 1.2rem);
+  line-height: 1.7;
+}
+
+.slide-count {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 10px 14px;
+  border-radius: 999px;
+  color: var(--soft);
+  font-weight: 800;
+}
+
+.progress {
+  height: 10px;
+  background: rgba(255,255,255,.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress > div {
+  height: 100%;
+  background: linear-gradient(90deg, var(--sky), #a78bfa);
+  transition: width .25s ease;
+}
+
+.slide-stage {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, .55);
+  border-radius: 32px;
+  padding: clamp(18px, 3vw, 34px);
+  box-shadow: 0 30px 80px rgba(0,0,0,.28);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+
+.deck-footer {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 8px;
+}
+
+.deck-footer > button, .step-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 16px;
+  color: #020617;
+  background: var(--sky);
+  font-weight: 900;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.deck-footer > button:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+.dots button {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 0;
+  background: rgba(255,255,255,.22);
+  cursor: pointer;
+}
+.dots button.active {
+  width: 28px;
+  background: var(--sky);
+}
+
+.cover-grid, .two-col, .cascade-layout, .flow-layout, .v10-layout, .decision-grid {
+  display: grid;
+  gap: 22px;
+}
+
+.cover-grid { grid-template-columns: .9fr 1.1fr; align-items: center; min-height: 520px; }
+.two-col { grid-template-columns: 1fr 1fr; }
+.cascade-layout { grid-template-columns: .82fr 1.18fr; }
+.flow-layout { grid-template-columns: 96px 1fr; }
+.v10-layout { grid-template-columns: 1.1fr .9fr; }
+.decision-grid { grid-template-columns: repeat(3, 1fr); }
+
+.hero-copy h2 {
+  margin: 18px 0 0;
+  font-size: clamp(2rem, 4vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -.05em;
+}
+.hero-copy p, .explain-card p, .cascade-detail p, .step-card p, .side-note p, .decision-card p, .modal-preview p {
+  color: var(--soft);
+  line-height: 1.75;
+}
+.big-icon {
+  width: 70px;
+  height: 70px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  background: rgba(56,189,248,.12);
+  color: var(--sky);
+  font-size: 32px;
+  border: 1px solid rgba(125,211,252,.18);
+}
+
+.mock-window, .explain-card, .wide-card, .cascade-detail, .step-card, .side-note, .decision-card, .modal-preview {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 28px;
+  padding: 22px;
+}
+.mock-window.large { padding: 0; overflow: hidden; }
+.window-top {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,.04);
+}
+.window-top span { width: 12px; height: 12px; border-radius: 999px; background: rgba(255,255,255,.24); }
+
+.terminal {
+  border-radius: 20px;
+  background: rgba(2,6,23,.84);
+  border: 1px solid rgba(255,255,255,.09);
+  padding: 16px;
+  color: #d9f99d;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-x: auto;
+  white-space: pre;
+}
+.mock-window .terminal { border: 0; border-radius: 0; min-height: 330px; }
+.terminal-line { display: flex; gap: 10px; }
+.terminal-prompt { color: var(--sky); font-weight: 900; }
+
+.explain-card h3, .cascade-detail h3, .step-card h3, .side-note h3, .decision-card h3, .modal-preview h3 {
+  margin: 0 0 10px;
+  font-size: clamp(1.4rem, 2.4vw, 2rem);
+  letter-spacing: -.035em;
+}
+.pill {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 900;
+  margin-top: 12px;
+}
+.pill.blue { color: #bae6fd; background: rgba(56,189,248,.12); }
+.pill.yellow { color: #fef3c7; background: rgba(250,204,21,.12); }
+.wide-card { grid-column: 1 / -1; }
+.flow-map {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.node {
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-weight: 900;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.05);
+}
+.node.bg { color: #fef08a; }
+.node.fg { color: #bae6fd; }
+.arrow { color: var(--muted); font-weight: 900; }
+
+.cascade-list, .stepper { display: flex; flex-direction: column; gap: 12px; }
+.cascade-step {
+  text-align: left;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.05);
+  color: var(--text);
+  border-radius: 22px;
+  padding: 16px;
+  cursor: pointer;
+}
+.cascade-step.active { background: rgba(56,189,248,.14); border-color: rgba(125,211,252,.45); }
+.cascade-step span { color: var(--sky); font-size: 12px; text-transform: uppercase; letter-spacing: .16em; font-weight: 900; }
+.cascade-step strong { display: block; margin-top: 6px; font-size: 1.1rem; }
+.cascade-step small { display: block; margin-top: 6px; color: var(--muted); font-family: monospace; }
+.mini-label {
+  margin: 0 0 8px;
+  color: var(--sky);
+  text-transform: uppercase;
+  letter-spacing: .18em;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.stepper { align-items: center; padding-top: 10px; }
+.step-dot {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--soft);
+  background: rgba(255,255,255,.05);
+  font-weight: 900;
+  cursor: pointer;
+}
+.step-dot.active { background: var(--sky); color: #020617; }
+.step-dot.done { background: rgba(52,211,153,.18); color: #bbf7d0; }
+.step-card code {
+  display: inline-block;
+  border-radius: 14px;
+  background: rgba(56,189,248,.09);
+  color: #bae6fd;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-family: monospace;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.step-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.step-actions button:first-child { background: rgba(255,255,255,.10); color: var(--text); }
+
+.chat-column {
+  border: 1px solid var(--border);
+  background: rgba(2,6,23,.55);
+  border-radius: 28px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-input {
+  color: var(--soft);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 14px;
+  font-family: monospace;
+  overflow-wrap: anywhere;
+}
+.task-card {
+  width: 100%;
+  text-align: left;
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.04);
+  color: var(--text);
+  padding: 16px;
+  cursor: pointer;
+}
+.task-card.selected { outline: 2px solid rgba(56,189,248,.55); }
+.task-card.task-yellow { border-color: rgba(250,204,21,.22); }
+.task-card.task-blue { border-color: rgba(56,189,248,.28); }
+.task-card.task-green { border-color: rgba(52,211,153,.28); }
+.task-header {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  font-weight: 900;
+  font-size: 13px;
+}
+.task-id, .task-status { color: var(--muted); font-family: monospace; font-weight: 700; }
+.task-body {
+  margin: 14px 0;
+  color: var(--soft);
+  white-space: pre-wrap;
+  font-family: monospace;
+  line-height: 1.6;
+}
+.task-footer { color: var(--sky); font-size: 13px; font-family: monospace; overflow-wrap: anywhere; }
+.side-note ul { color: var(--soft); line-height: 1.9; padding-left: 20px; }
+
+.tui-shell {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  grid-template-rows: 1fr auto;
+  min-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  overflow: hidden;
+  position: relative;
+  background: rgba(2,6,23,.70);
+}
+.tui-main, .tui-sidebar { padding: 22px; }
+.tui-main { border-right: 1px solid var(--border); }
+.tui-title { font-size: 1.4rem; font-weight: 900; margin-bottom: 30px; }
+.chat-line { color: var(--soft); margin-bottom: 14px; }
+.chat-line.prompt { font-family: monospace; color: #d9f99d; }
+.fg-stream {
+  margin-top: 70px;
+  border: 1px solid rgba(56,189,248,.22);
+  background: rgba(56,189,248,.07);
+  color: #bae6fd;
+  padding: 18px;
+  border-radius: 20px;
+}
+.tui-sidebar { background: rgba(15,23,42,.82); display: flex; flex-direction: column; gap: 12px; }
+.sidebar-section { color: var(--muted); text-transform: uppercase; letter-spacing: .14em; font-size: 12px; font-weight: 900; margin-top: 4px; }
+.mini-task {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.04);
+  color: var(--text);
+  border-radius: 18px;
+  padding: 14px;
+  text-align: left;
+  cursor: pointer;
+  line-height: 1.6;
+}
+.mini-task.active { border-color: rgba(56,189,248,.55); background: rgba(56,189,248,.11); }
+.mini-task.done { opacity: .9; }
+kbd {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.08);
+  border-radius: 8px;
+  padding: 2px 6px;
+}
+.tui-footer {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border);
+  padding: 14px 18px;
+  color: var(--soft);
+  font-family: monospace;
+  overflow-wrap: anywhere;
+}
+.modal-preview {
+  position: absolute;
+  left: 50%;
+  bottom: 72px;
+  transform: translateX(-50%);
+  width: min(460px, calc(100% - 40px));
+  box-shadow: 0 28px 80px rgba(0,0,0,.42);
+}
+
+.decision-card.good { border-color: rgba(52,211,153,.28); }
+.decision-card.future { border-color: rgba(56,189,248,.28); }
+.decision-card.question { border-color: rgba(250,204,21,.28); }
+.error-card {
+  border: 1px solid rgba(251,113,133,.45);
+  background: rgba(251,113,133,.12);
+  color: #fecdd3;
+  padding: 18px;
+  border-radius: 20px;
+}
+
+@media (max-width: 960px) {
+  .deck-header, .cover-grid, .two-col, .cascade-layout, .flow-layout, .v10-layout, .decision-grid, .tui-shell {
+    grid-template-columns: 1fr;
+  }
+  .slide-count { justify-self: start; }
+  .task-header { grid-template-columns: 1fr; }
+  .tui-main { border-right: 0; border-bottom: 1px solid var(--border); }
+  .modal-preview { position: static; transform: none; width: auto; margin: 18px; }
+  .deck-footer { grid-template-columns: 1fr; }
+  .dots { order: -1; }
+}
+`;
+
+    function InteractiveBGFGPresentation() {
+      const [index, setIndex] = useState(0);
+
+      useEffect(() => {
+        runSanityChecks();
+      }, []);
+
+      useEffect(() => {
+        const onKeyDown = (event) => {
+          if (event.key === "ArrowRight") setIndex((current) => Math.min(deck.length - 1, current + 1));
+          if (event.key === "ArrowLeft") setIndex((current) => Math.max(0, current - 1));
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+      }, []);
+
+      const slide = deck[index];
+      const progress = useMemo(() => ((index + 1) / deck.length) * 100, [index]);
+
+      return (
+        <main className="page">
+          <style>{css}</style>
+          <div className="glow glow-a" />
+          <div className="glow glow-b" />
+          <div className="deck-shell">
+            <header className="deck-header">
+              <div>
+                <p className="deck-kicker">{slide.eyebrow}</p>
+                <h1>{slide.title}</h1>
+                <p className="deck-subtitle">{slide.subtitle}</p>
+              </div>
+              <div className="slide-count">
+                {index + 1} / {deck.length}
+              </div>
+            </header>
+
+            <div className="progress" aria-label="Progreso de presentación">
+              <div style={{ width: `${progress}%` }} />
+            </div>
+
+            <section className="slide-stage">
+              <SlideBody slide={slide} />
+            </section>
+
+            <footer className="deck-footer">
+              <button type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0}>
+                <SvgIcon name="left" /> Anterior
+              </button>
+              <div className="dots" aria-label="Navegación por slides">
+                {deck.map((item, dotIndex) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-label={`Ir a slide ${dotIndex + 1}`}
+                    className={dotIndex === index ? "active" : ""}
+                    onClick={() => setIndex(dotIndex)}
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIndex((current) => Math.min(deck.length - 1, current + 1))}
+                disabled={index === deck.length - 1}
+              >
+                Siguiente <SvgIcon name="right" />
+              </button>
+            </footer>
+          </div>
+        </main>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(React.createElement(InteractiveBGFGPresentation));
+  </script>
+</body>
+</html>
