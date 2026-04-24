@@ -14,9 +14,13 @@
  * Spec: openspec/changes/opencode-plan-review-live-control/specs/host-compat/spec.md
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildV14Hooks } from "../../../host-compat/v14/index.js";
+import {
+  current as sharedStateCurrent,
+  clear as sharedStateClear,
+} from "../../../tui-plugin/shared-state.js";
 
 function makeV14Input() {
   const promptSpy = vi.fn(async () => ({
@@ -206,5 +210,61 @@ describe("buildV14Hooks — zero stdout pollution (Phase 7.5.6)", () => {
     await buildV14Hooks(input as never);
 
     expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 11.3 — SharedPluginState wired from buildV14Hooks
+// ---------------------------------------------------------------------------
+
+describe("buildV14Hooks — SharedPluginState integration (Phase 11.3)", () => {
+  beforeEach(() => {
+    sharedStateClear();
+  });
+
+  afterEach(() => {
+    sharedStateClear();
+    vi.restoreAllMocks();
+  });
+
+  it("after buildV14Hooks resolves, current() returns a non-undefined SharedPluginState", async () => {
+    const input = makeV14Input();
+    await buildV14Hooks(input as never);
+
+    const state = sharedStateCurrent();
+    expect(state).toBeDefined();
+  });
+
+  it("SharedPluginState.registry is the same TaskRegistry instance used by the hooks", async () => {
+    const input = makeV14Input();
+
+    // Inject a known registry via overrides so we can test identity
+    const { TaskRegistry } = await import("@maicolextic/bg-subagents-core");
+    const knownRegistry = new TaskRegistry();
+
+    await buildV14Hooks(input as never, { registry: knownRegistry });
+
+    const state = sharedStateCurrent();
+    expect(state?.registry).toBe(knownRegistry);
+  });
+
+  it("SharedPluginState.policyStore is a TaskPolicyStore with getSessionOverride/setSessionOverride", async () => {
+    const input = makeV14Input();
+    await buildV14Hooks(input as never);
+
+    const state = sharedStateCurrent();
+    expect(state?.policyStore).toBeDefined();
+    expect(typeof state?.policyStore.getSessionOverride).toBe("function");
+    expect(typeof state?.policyStore.setSessionOverride).toBe("function");
+  });
+
+  it("SharedPluginState is set on globalThis via the well-known symbol key", async () => {
+    const input = makeV14Input();
+    await buildV14Hooks(input as never);
+
+    const sym = Symbol.for("@maicolextic/bg-subagents/shared");
+    const direct = (globalThis as Record<symbol, unknown>)[sym];
+    expect(direct).toBeDefined();
+    expect(direct).toBe(sharedStateCurrent());
   });
 });

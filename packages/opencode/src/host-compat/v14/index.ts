@@ -32,6 +32,7 @@ import { buildSystemTransform } from "./system-transform.js";
 import { buildV14EventHandler } from "./event-handler.js";
 import { buildMessagesTransformHook } from "./messages-transform.js";
 import { getSharedPolicyStore } from "./slash-commands.js";
+import { registerFromServer } from "../../tui-plugin/shared-state.js";
 
 // -----------------------------------------------------------------------------
 // Overrides (test seam)
@@ -183,11 +184,23 @@ export async function buildV14Hooks(
   // ---------------------------------------------------------------------------
 
   const planReviewPolicy: FlatPolicyConfig = overrides.planReviewPolicy ?? {};
+  const policyStore = getSharedPolicyStore();
   const messagesTransform = buildMessagesTransformHook({
     policy: planReviewPolicy,
-    policyStore: getSharedPolicyStore(),
+    policyStore,
     logger,
   });
+
+  // ---------------------------------------------------------------------------
+  // SharedPluginState (Phase 11.3) — wire server-side state for TUI plugin
+  // ---------------------------------------------------------------------------
+  //
+  // Both registry and policyStore are now constructed. Register them in the
+  // process-global singleton so the TUI plugin (loaded separately via tui.json)
+  // can read them without HTTP round-trips. Safe to call every boot — the
+  // last-write-wins semantics of registerFromServer handle re-boots correctly.
+
+  registerFromServer({ registry, policyStore });
 
   logger.info("plugin:booted", {
     host: "v14",
