@@ -2,7 +2,7 @@
 
 **Target repo**: https://github.com/Gentleman-Programming/gentle-ai
 **Status**: draft — NOT yet submitted
-**Filed by**: @maicolextic
+**Filed by**: @Maicololiveras
 **Purpose**: pass the issue-first gate to unblock eventual PR for adding `@maicolextic/bg-subagents-opencode` to the OpenCode adapter.
 
 ---
@@ -144,4 +144,4 @@ OpenCode stable.
 - Respond to review feedback within 48 hours.
 - Update examples and documentation as needed.
 
-**Contact**: @maicolextic (GitHub) — maicoljimenez360@gmail.com
+**Contact**: @Maicololiveras (GitHub) — maicoljimenez360@gmail.com
