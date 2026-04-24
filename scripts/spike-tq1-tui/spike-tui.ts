@@ -19,6 +19,9 @@ import type {
   TuiPluginApi,
   TuiPluginMeta,
 } from "@opencode-ai/plugin/tui";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const INIT_TOKEN = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const SHARED_KEY = Symbol.for("@maicolextic/bg-subagents-spike-tq1");
@@ -29,6 +32,26 @@ type SharedState = {
   token: string;
   setAt: number;
 };
+
+// Persistent verification — writes to a known file so we can confirm
+// the TUI loader executed this module even if the toast disappeared
+// before the user could capture it.
+const VERIFY_DIR = join(homedir(), ".local", "share", "opencode");
+const VERIFY_FILE = join(VERIFY_DIR, "spike-tq1-verified.log");
+
+function verifyLog(phase: string, extra?: string) {
+  try {
+    mkdirSync(VERIFY_DIR, { recursive: true });
+    appendFileSync(
+      VERIFY_FILE,
+      `[${new Date().toISOString()}] phase=${phase} pid=${process.pid} token=${INIT_TOKEN}${extra ? ` ${extra}` : ""}\n`,
+    );
+  } catch {
+    // silent fail — verification is best-effort
+  }
+}
+
+verifyLog("module-load");
 
 console.log(
   `[SPIKE-TQ1-TUI] MODULE-LOAD pid=${process.pid} token=${INIT_TOKEN}`,
@@ -55,6 +78,11 @@ const Tui = async (
   _options: unknown,
   meta: TuiPluginMeta,
 ) => {
+  verifyLog(
+    "boot",
+    `meta.id=${meta.id} meta.state=${meta.state} meta.source=${meta.source}`,
+  );
+
   console.log(
     `[SPIKE-TQ1-TUI] BOOT pid=${process.pid} token=${INIT_TOKEN} meta.id=${meta.id} meta.state=${meta.state} meta.source=${meta.source} meta.spec=${meta.spec}`,
   );
@@ -80,4 +108,4 @@ const Tui = async (
   });
 };
 
-export default { tui: Tui };
+export default { id: "bg-subagents-spike-tq1", tui: Tui };
