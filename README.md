@@ -11,7 +11,7 @@ Per-invocation background subagent execution for AI coding hosts — with a full
 
 See the BG vs FG model, 3-level policy cascade, and v1.0 UX in a clickable walkthrough:
 
-**[Open interactive presentation](https://raw.githack.com/Maicololiveras/bg-subagents/main/docs/upstream/presentation/bg-vs-fg-interactive.html)**
+**[Open interactive presentation](https://raw.githack.com/Maicololiveras/bg-subagents/release/v1.0.0/docs/upstream/presentation/bg-vs-fg-interactive.html)**
 
 Works in any modern browser — no build, no install. Runs locally too: open `docs/upstream/presentation/bg-vs-fg-interactive.html` directly from disk.
 
