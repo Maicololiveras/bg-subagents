@@ -104,7 +104,6 @@ export interface SlotPlugin {
   /** No id field — matches TuiSlotPlugin<{}> contract: id?: never */
   readonly slots: {
     sidebar_content: SlotRenderFn<SidebarSlotContext>;
-    [key: string]: SlotRenderFn;
   };
   /** Polling interval stored for Phase 13 lifecycle wiring. */
   readonly pollIntervalMs: number;

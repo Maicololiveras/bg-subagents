@@ -148,7 +148,7 @@ export function buildMessagesTransformHook(
     const decisions = resolveBatch({
       entries: taskEntries.map((e) => ({ call_id: e.call_id, agent_name: e.agent_name })),
       policy,
-      sessionOverride,
+      ...(sessionOverride !== undefined ? { sessionOverride } : {}),
     });
 
     log.debug("plan-review:decisions", {
@@ -213,11 +213,17 @@ export class MessagesTransformInterceptor implements PlanInterceptor {
   ): Promise<{ parts: readonly Part[]; decisions: readonly PolicyDecision[] }> {
     // Wrap parts in a single synthetic message, run the hook, extract result.
     const output = { messages: [{ parts: [...parts] as Part[] }] };
-    await this.#hook({ sessionID: ctx.sessionID }, output);
+    await this.#hook({ sessionID: ctx.sessionID, model: null }, output);
 
     const resultParts = output.messages[0]!.parts;
-    const marker = resultParts.find(isPlanReviewMarker);
-    const decisions: readonly PolicyDecision[] = marker?.decisions ?? [];
+    let markerPart: PlanReviewMarker | undefined;
+    for (const p of resultParts) {
+      if (isPlanReviewMarker(p)) {
+        markerPart = p;
+        break;
+      }
+    }
+    const decisions: readonly PolicyDecision[] = markerPart?.decisions ?? [];
 
     return { parts: resultParts, decisions };
   }

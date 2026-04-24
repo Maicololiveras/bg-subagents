@@ -179,7 +179,7 @@ export async function interceptTaskMoveBgCommand(
   text: string,
   sessionID: string,
   registry: TaskRegistry,
-  store: TaskPolicyStore,
+  _store: TaskPolicyStore,
 ): Promise<InterceptResult> {
   const trimmed = text.trim();
 
