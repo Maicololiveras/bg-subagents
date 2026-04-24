@@ -7,6 +7,14 @@
 
 Per-invocation background subagent execution for AI coding hosts — with a full TUI layer for live task control.
 
+## Interactive presentation
+
+See the BG vs FG model, 3-level policy cascade, and v1.0 UX in a clickable walkthrough:
+
+**[Open interactive presentation](https://raw.githack.com/Maicololiveras/bg-subagents/main/docs/upstream/presentation/bg-vs-fg-interactive.html)**
+
+Works in any modern browser — no build, no install. Runs locally too: open `docs/upstream/presentation/bg-vs-fg-interactive.html` directly from disk.
+
 `bg-subagents` intercepts every `task` call and routes it background or foreground based on your policy config. No picker required. The main conversation continues immediately; completion is delivered back as a bus event or synthetic assistant message. A sidebar and keyboard shortcuts give you live visibility directly in the OpenCode TUI.
 
 **New in v1.0**: PolicyResolver (policy-driven routing, no picker), `/task move-bg` live control, TUI sidebar + Ctrl+B/F/↓ keybinds, zero-stdout guarantee, 788 tests.
@@ -196,6 +204,9 @@ JSONL logs live at `~/.local/share/bg-subagents/history/` (Linux/Mac) or `%APPDA
 | Doc | What it covers |
 |-----|---------------|
 | [packages/opencode/README.md](packages/opencode/README.md) | Full plugin reference: install, config, `/task` commands, policy JSONC, TUI keybinds, troubleshooting |
+| [docs/installation.md](docs/installation.md) | Consolidated installation guide (npm, gentle-ai, local dev, verification, troubleshooting) |
+| [docs/integrations/gentle-ai.md](docs/integrations/gentle-ai.md) | Gentle-AI integration status, mechanism, and upstream PR info |
+| [docs/INDEX.md](docs/INDEX.md) | Full docs index — navigation aid for all docs |
 | [docs/architecture.md](docs/architecture.md) | Component diagram, hook wiring table, data flow, SharedPluginState bridge |
 | [docs/migration-v0.1-to-v1.0.md](docs/migration-v0.1-to-v1.0.md) | Breaking changes from v0.1, upgrade steps, rollback instructions |
 | [docs/policy-schema.md](docs/policy-schema.md) | Full policy JSONC field reference |

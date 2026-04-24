@@ -7,6 +7,18 @@ OpenCode plugin for background sub-agent orchestration — non-blocking `task_bg
 
 ---
 
+## Interactive presentation
+
+See how bg-subagents works — a clickable walkthrough of the BG vs FG model, the 3-level policy cascade, and the v1.0 UX:
+
+**[Open interactive presentation](https://raw.githack.com/Maicololiveras/bg-subagents/main/docs/upstream/presentation/bg-vs-fg-interactive.html)** &nbsp;·&nbsp; [View source](../../docs/upstream/presentation/bg-vs-fg-interactive.jsx)
+
+Works in any modern browser (React 18 + Babel Standalone via unpkg — no build, no install). Runs locally too: open `docs/upstream/presentation/bg-vs-fg-interactive.html` directly from disk.
+
+> Note: the raw.githack URL requires the file to be pushed to the `main` branch on GitHub. Until then, open the `.html` file directly from disk.
+
+---
+
 ## Features
 
 **Server layer (OpenCode 1.14.22+)**
