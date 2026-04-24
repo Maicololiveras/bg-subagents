@@ -620,6 +620,52 @@ export function createLogger(namespace: string): Logger;
 - `packages/opencode/src/host-compat/v14/delivery.ts` — replace `delivery:primary-*` logs
 - `packages/opencode/src/host-compat/legacy/*` — same discipline for all legacy codepath files
 
+### Portability (hard constraint)
+
+**Rule**: The plugin must work identically on Windows, Linux, and macOS. ZERO hardcoded paths, zero assumptions about any specific user's machine or directory layout. All paths MUST be resolved via Node APIs (`os.homedir()`, `path.join()`). Any hardcoded path (e.g., `C:/SDK/...`, `/home/...`, `/Users/...`) in production code is a critical defect.
+
+**Config storage**: End-user configuration lives embedded in `opencode.json` under the key `bgSubagents`. No extra config files, no environment setup beyond what is listed below. Plugin falls back to internal defaults if the key is absent — a minimum-viable install has zero required config.
+
+```json
+{
+  "plugin": ["@maicolextic/bg-subagents-opencode"],
+  "bgSubagents": {
+    "policy": {
+      "*": "background"
+    }
+  }
+}
+```
+
+**Log file paths**: Use `path.join(os.homedir(), ".local", "share", "opencode", "logs", "bg-subagents.log")` on all platforms. This path is cross-platform verified: OpenCode itself stores its database at `~/.local/share/opencode/opencode.db` on Windows via Bun (confirmed in smoke test output). Using `path.join()` — never string concatenation with `/` or `\` — ensures correct separators on every OS.
+
+**Env vars**: `BG_SUBAGENTS_*` prefix for all feature flags and overrides (e.g., `BG_SUBAGENTS_DEBUG`, `BG_SUBAGENTS_LOG_FILE`, `BG_SUBAGENTS_FORCE_COMPAT`, `BG_SUBAGENTS_PLAN_REVIEW`). OS-neutral naming — no platform-specific variable conventions.
+
+**Installation story (minimum viable)**:
+
+```bash
+npm install @maicolextic/bg-subagents-opencode
+```
+
+Add to `opencode.json`:
+
+```json
+{
+  "plugin": ["@maicolextic/bg-subagents-opencode"]
+}
+```
+
+Nothing else required. No global config files, no environment variable setup, no post-install scripts, no manual directory creation.
+
+**Dev-only exceptions (NEVER shipped to end users)**:
+
+- `scripts/spike-*/` folders — Michael's local spike workspace. These may reference `C:/SDK/bg-subagents/` or other machine-specific paths. They are never published.
+- `~/.config/opencode/plugins/bg-subagents.ts` dev shim — hardcodes `file:///C:/SDK/bg-subagents/packages/opencode/src/plugin.ts` for local development link. This is Michael's personal dev setup and explicitly out of scope for distribution. It is never included in the npm package.
+
+The distinction between dev-only tools and production-distributed code MUST remain unambiguous. Any file that references a machine-specific path must live under `scripts/` or be explicitly documented as a dev-only artifact excluded from the published tarball.
+
+**Reference**: engram topic `preference/portability-hard-constraint` (obs #1248) for full context, rationale, and Gentle-AI integration notes.
+
 ---
 
 ## Testing Strategy
@@ -644,6 +690,7 @@ export function createLogger(namespace: string): Logger;
 | Regression | Existing 432 vitest tests | Must remain green after refactor (move to `host-compat/legacy/` paths) |
 | Manual | Real OpenCode 1.14.21 on user's machine | E2E validation before publish: install local, run sdd-orchestrator, verify Plan Review + Live Control |
 | Manual | Real OpenCode <1.14 (if accessible) | Validate legacy codepath if/when we find a legacy binary |
+| CI | Cross-platform path correctness | Test suite MUST pass on `ubuntu-latest` AND `windows-latest` GitHub Actions runners (macOS optional but nice-to-have). Any test that constructs filesystem paths MUST use `path.join()` / `os.homedir()` — never string concatenation of `/` or `\`. |
 
 **Coverage target**: ≥80% for new modules. Keep existing coverage unchanged or improved.
 
