@@ -1,3 +1,13 @@
+> **SUPERSEDED 2026-04-24 — DO NOT SUBMIT**
+>
+> Post-draft investigation confirmed the feature this issue requests **already exists** in OpenCode 1.14.23+. The TUI plugin loader is accessible via a separate `tui.json` config file (added 2026-03-27 in anomalyco/opencode PR #19347). Our TQ-1 spike originally used `opencode.json` (wrong config, routes to server loader) which is why we misdiagnosed the loader as missing.
+>
+> **Real upstream gap**: documentation — `tui.json` is not mentioned in `packages/web/src/content/docs/plugins.mdx`. See `docs/upstream/opencode-docs-pr.md` for the replacement contribution plan.
+>
+> This file is kept for historical reference only. Do NOT submit the issue below.
+>
+> ---
+
 # Upstream issue: public TUI plugin loader for OpenCode
 
 **Target repo**: https://github.com/anomalyco/opencode
