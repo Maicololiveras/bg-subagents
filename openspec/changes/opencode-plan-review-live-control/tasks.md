@@ -195,11 +195,11 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 
 ## Phase 14: Integration & E2E Tests
 
-- [ ] 14.1 **Integration test: v14 Plan Review E2E**. Fake `experimental.chat.messages.transform` trigger with 3 task calls (different agent names) → PolicyResolver assigns BG/FG per agent_name using configured policy → assert OpenCode receives rewritten parts (BG entries swapped to task_bg, FG entries unchanged). No picker invocation. Also: assert `/task policy bg` override forces all 3 to BG regardless of per-agent config. (Files: `packages/opencode/src/__tests__/integration/v14-plan-review.test.ts`)
-- [ ] 14.2 **Integration test: v14 Live Control E2E**. Simulate server-side message interception: inject `/task move-bg <id>` as user message → assert server plugin detects pattern → assert registry shows cancelled+re-spawned task. (Files: `packages/opencode/src/__tests__/integration/live-control.test.ts`)
-- [ ] 14.3 **Integration test: v14 completion delivery E2E**. Spawn BG task → complete it → assert `client.session.message.create` called once, no fallback fired. Then simulate primary failure → assert fallback fires. (Files: `packages/opencode/src/__tests__/integration/v14-delivery.test.ts`)
-- [ ] 14.4 **Integration test: legacy regression**. Existing `opencode-adapter.test.ts` should still pass unchanged. If updates needed, minimize changes. (Files: `packages/opencode/src/__tests__/integration/opencode-adapter.test.ts`)
-- [ ] 14.5 **Integration test: version detection routing**. Given both ctx shapes, assert correct builder invoked. (Files: `packages/opencode/src/__tests__/integration/routing.test.ts`)
+- [x] 14.1 **Integration test: v14 Plan Review E2E**. Fake `experimental.chat.messages.transform` trigger with 3 task calls (different agent names) → PolicyResolver assigns BG/FG per agent_name using configured policy → assert OpenCode receives rewritten parts (BG entries swapped to task_bg, FG entries unchanged). No picker invocation. Also: assert `/task policy bg` override forces all 3 to BG regardless of per-agent config. (Files: `packages/opencode/src/__tests__/integration/v14-plan-review.test.ts`)
+- [x] 14.2 **Integration test: v14 Live Control E2E**. Simulate server-side message interception: inject `/task move-bg <id>` as user message → assert server plugin detects pattern → assert registry shows cancelled+re-spawned task. (Files: `packages/opencode/src/__tests__/integration/live-control.test.ts`)
+- [x] 14.3 **Integration test: v14 completion delivery E2E**. Spawn BG task → complete it → assert `client.session.message.create` called once, no fallback fired. Then simulate primary failure → assert fallback fires. (Files: `packages/opencode/src/__tests__/integration/v14-delivery.test.ts`)
+- [x] 14.4 **Integration test: legacy regression**. Existing `opencode-adapter.test.ts` should still pass unchanged. If updates needed, minimize changes. (Files: `packages/opencode/src/__tests__/integration/opencode-adapter.test.ts`)
+- [x] 14.5 **Integration test: version detection routing**. Given both ctx shapes, assert correct builder invoked. (Files: `packages/opencode/src/__tests__/integration/routing.test.ts`)
 
 ---
 
