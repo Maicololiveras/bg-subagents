@@ -20,6 +20,7 @@ import {
   TaskRegistry,
   createLogger,
   resolveHistoryPath,
+  type FlatPolicyConfig,
   type LoadedPolicy,
   type Logger,
 } from "@maicolextic/bg-subagents-core";
@@ -29,6 +30,8 @@ import { registerTaskBgToolV14 } from "./tool-register.js";
 import { createV14Delivery } from "./delivery.js";
 import { buildSystemTransform } from "./system-transform.js";
 import { buildV14EventHandler } from "./event-handler.js";
+import { buildMessagesTransformHook } from "./messages-transform.js";
+import { getSharedPolicyStore } from "./slash-commands.js";
 
 // -----------------------------------------------------------------------------
 // Overrides (test seam)
@@ -41,6 +44,12 @@ export interface BuildV14HooksOverrides {
   readonly resolver?: PolicyResolver;
   readonly ackTimeoutMs?: number;
   readonly sessionID?: string;
+  /**
+   * Flat policy config for Plan Review (Phase 8-9).
+   * Keys are agent names or "*" wildcard. Defaults to empty config (all agents → background).
+   * Source: opencode.json bgSubagents.policy
+   */
+  readonly planReviewPolicy?: FlatPolicyConfig;
 }
 
 // -----------------------------------------------------------------------------
@@ -79,6 +88,10 @@ export async function buildV14Hooks(
   "experimental.chat.system.transform"?: (
     input: { sessionID?: string; model: unknown },
     output: { system: string[] },
+  ) => Promise<void>;
+  "experimental.chat.messages.transform"?: (
+    input: { sessionID?: string; model: unknown },
+    output: { messages: Array<{ parts: unknown[] }> },
   ) => Promise<void>;
 }> {
   const logger: Logger = overrides.logger ?? createLogger("v14:boot");
@@ -165,6 +178,17 @@ export async function buildV14Hooks(
 
   const eventHandler = buildV14EventHandler({ logger });
 
+  // ---------------------------------------------------------------------------
+  // Plan Review hook (Phase 8-9)
+  // ---------------------------------------------------------------------------
+
+  const planReviewPolicy: FlatPolicyConfig = overrides.planReviewPolicy ?? {};
+  const messagesTransform = buildMessagesTransformHook({
+    policy: planReviewPolicy,
+    policyStore: getSharedPolicyStore(),
+    logger,
+  });
+
   logger.info("plugin:booted", {
     host: "v14",
     session_id: sessionID,
@@ -172,6 +196,7 @@ export async function buildV14Hooks(
     delivery: "v14-prompt-noreply",
     system_transform: true,
     event_hook: true,
+    plan_review: true,
   });
 
   return {
@@ -180,6 +205,7 @@ export async function buildV14Hooks(
     },
     event: eventHandler,
     "experimental.chat.system.transform": systemTransform,
+    "experimental.chat.messages.transform": messagesTransform as never,
   };
 }
 

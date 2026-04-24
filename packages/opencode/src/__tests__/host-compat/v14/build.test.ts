@@ -146,6 +146,50 @@ describe("buildV14Hooks — Phase 7 hooks wired", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 9.2 — messages.transform hook wired
+// ---------------------------------------------------------------------------
+
+describe("buildV14Hooks — Plan Review hook wired (Phase 9.2)", () => {
+  it("returns an experimental.chat.messages.transform hook", async () => {
+    const input = makeV14Input();
+    const hooks = await buildV14Hooks(input as never);
+    const transformHook = hooks["experimental.chat.messages.transform"];
+    expect(typeof transformHook).toBe("function");
+  });
+
+  it("messages.transform hook rewrites task calls per policy config", async () => {
+    const input = makeV14Input();
+    const hooks = await buildV14Hooks(input as never, {
+      planReviewPolicy: { "sdd-explore": "background" },
+    });
+    const transformHook = hooks["experimental.chat.messages.transform"];
+
+    const output = {
+      messages: [
+        {
+          parts: [
+            {
+              type: "tool-invocation",
+              toolInvocationId: "call_build_test",
+              toolName: "task",
+              args: { subagent_type: "sdd-explore", prompt: "explore" },
+            },
+          ],
+        },
+      ],
+    };
+
+    await transformHook!({ sessionID: "sess_build", model: {} }, output as never);
+
+    const taskParts = output.messages[0]!.parts.filter(
+      (p: { type?: string; toolName?: string }) =>
+        p.type === "tool-invocation" && p.toolName !== undefined,
+    ) as Array<{ toolName: string }>;
+    expect(taskParts[0]?.toolName).toBe("task_bg");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase 7.5.6 — Zero-pollution stdout-capture test for buildV14Hooks
 // ---------------------------------------------------------------------------
 
