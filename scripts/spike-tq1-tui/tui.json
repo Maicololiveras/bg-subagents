@@ -1,0 +1,5 @@
+{
+  "plugin": [
+    "./spike-tui.ts"
+  ]
+}

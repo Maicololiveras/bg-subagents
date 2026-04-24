@@ -1,6 +1,4 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    "./spike-tui.ts"
-  ]
+  "plugin": []
 }
