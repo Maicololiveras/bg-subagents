@@ -13,6 +13,9 @@
  * Spec: openspec/changes/opencode-plan-review-live-control/specs/host-compat/spec.md
  */
 
+import * as os from "node:os";
+import * as path from "node:path";
+
 import {
   HARDCODED_DEFAULT_POLICY,
   HistoryStore,
@@ -25,7 +28,7 @@ import {
   type Logger,
 } from "@maicolextic/bg-subagents-core";
 
-import { runOpenCodeSubagent } from "../../runtime.js";
+import { createSubagentRunner } from "../../runtime.js";
 import { registerTaskBgToolV14 } from "./tool-register.js";
 import { createV14Delivery } from "./delivery.js";
 import { buildSystemTransform } from "./system-transform.js";
@@ -109,10 +112,18 @@ export async function buildV14Hooks(
   // Tool registration (Phase 5)
   // ---------------------------------------------------------------------------
 
+  // v0.4: Build a subagent runner bound to the OpencodeClient for noReply
+  // delivery on child process exit. This replaces the v1.0 session.prompt
+  // path which blocked the parent in 1.14.28.
+  const subagentRunner = createSubagentRunner({
+    client: input.client,
+    logger,
+  });
+
   const taskBgTool = registerTaskBgToolV14({
     registry,
     run: (toolCtx, parsed, signal) =>
-      runOpenCodeSubagent(
+      subagentRunner(
         toolCtx as never,
         {
           subagent_type: parsed.subagent_type,
@@ -212,6 +223,169 @@ export async function buildV14Hooks(
     plan_review: true,
   });
 
+  // ---------------------------------------------------------------------------
+  // tool.definition hook (v0.6) — steer model toward task_bg for BG-policy agents
+  // ---------------------------------------------------------------------------
+  //
+  // Discovery 27/04 from sst/opencode source: tool.definition can mutate
+  // descriptions/parameters BEFORE they are shown to the model. We use it to:
+  //
+  //   1. For the built-in `task` tool: append a steering hint listing which
+  //      subagent_types the user has set to BG mode in policy.jsonc.
+  //      The model still chooses, but the hint MAKES task_bg more attractive
+  //      for those agents.
+  //
+  //   2. For our task_bg tool: emphasize that it is the PREFERRED option for
+  //      the configured BG agents.
+  //
+  // This is plugin-only "soft steering" — it is NOT deterministic. The
+  // deterministic seam (task.dispatch.before) requires upstream PR.
+  // See engram topic: v2/opencode-plugin-api-full-surface
+  const toolDefinitionLogger = createLogger("host-compat:v14:tool-def");
+  const toolDefinition = async (
+    input: { toolID: string },
+    output: { description?: string; parameters?: unknown },
+  ): Promise<void> => {
+    // Log EVERY invocation so we can confirm the hook is wired by the host.
+    toolDefinitionLogger.info("tool.definition fired", { toolID: input.toolID });
+    if (input.toolID !== "task" && input.toolID !== "task_bg") return;
+    try {
+      const fs = await import("node:fs");
+      const filePath = resolvePolicyJsoncPath();
+      if (!fs.existsSync(filePath)) {
+        toolDefinitionLogger.info("policy.jsonc not found — skip steering", {
+          path: filePath,
+        });
+        return;
+      }
+      const raw = fs.readFileSync(filePath, "utf8");
+      const policy = JSON.parse(raw) as {
+        default_mode_by_agent_name?: Record<string, "bg" | "fg">;
+      };
+      const bgAgents = Object.entries(policy.default_mode_by_agent_name ?? {})
+        .filter(([, mode]) => mode === "bg")
+        .map(([name]) => name);
+      const fgAgents = Object.entries(policy.default_mode_by_agent_name ?? {})
+        .filter(([, mode]) => mode === "fg")
+        .map(([name]) => name);
+      toolDefinitionLogger.info("policy loaded", {
+        toolID: input.toolID,
+        bg_count: bgAgents.length,
+        fg_count: fgAgents.length,
+      });
+
+      const baseDesc = output.description ?? "";
+      if (input.toolID === "task" && bgAgents.length > 0) {
+        output.description =
+          baseDesc +
+          "\n\n[bg-subagents policy] The following subagent_types are configured for BACKGROUND mode by user policy: " +
+          bgAgents.join(", ") +
+          ". For these agents, prefer the `task_bg` tool instead of `task` so the user's main session is not blocked while the subagent runs. The `task` tool blocks until completion; `task_bg` returns immediately and delivers results asynchronously.";
+        toolDefinitionLogger.info("steering hint appended to task description", {
+          original_len: baseDesc.length,
+          new_len: output.description.length,
+          bg_agents: bgAgents,
+        });
+      } else if (input.toolID === "task_bg") {
+        const preferList =
+          bgAgents.length > 0
+            ? "PREFERRED for these subagent_types per user policy: " +
+              bgAgents.join(", ") +
+              "."
+            : "";
+        const fgList =
+          fgAgents.length > 0
+            ? "AVOID for these subagent_types (user wants foreground): " +
+              fgAgents.join(", ") +
+              "."
+            : "";
+        const hints = [preferList, fgList].filter((s) => s.length > 0).join(" ");
+        if (hints.length > 0) {
+          output.description = baseDesc + "\n\n[bg-subagents policy] " + hints;
+          toolDefinitionLogger.info("steering hint appended to task_bg description", {
+            new_len: output.description.length,
+          });
+        }
+      }
+    } catch (err) {
+      toolDefinitionLogger.warn("tool.definition error", {
+        toolID: input.toolID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // tool.execute.before hook (v0.6) — FORCE-REDIRECT for BG-policy agents
+  // ---------------------------------------------------------------------------
+  //
+  // When the orchestrator calls `task` with a subagent_type that the user has
+  // marked as BG in policy.jsonc, throw a redirect error so the LLM is forced
+  // to retry with `task_bg`. This is deterministic in the sense that the
+  // user's BG-marked agents CANNOT be invoked synchronously — the call always
+  // fails until the LLM picks the right tool.
+  //
+  // The error message is wired to nudge the LLM directly:
+  //   "POLICY_VIOLATION: subagent '{type}' must use task_bg, not task. Retry."
+  //
+  // We do NOT block `task` for FG agents or for agents not in policy.
+  const toolBeforeLogger = createLogger("host-compat:v14:tool-before");
+  const toolExecuteBefore = async (
+    input: { tool: string; sessionID: string; callID: string },
+    output: { args: unknown },
+  ): Promise<void> => {
+    if (input.tool !== "task") return;
+    try {
+      const fs = await import("node:fs");
+      const filePath = resolvePolicyJsoncPath();
+      if (!fs.existsSync(filePath)) return;
+      const raw = fs.readFileSync(filePath, "utf8");
+      const policy = JSON.parse(raw) as {
+        default_mode_by_agent_name?: Record<string, "bg" | "fg">;
+      };
+      const args = output.args as { subagent_type?: string };
+      const subagentType = args?.subagent_type;
+      if (!subagentType) {
+        toolBeforeLogger.info("task call has no subagent_type — pass through", {
+          callID: input.callID,
+        });
+        return;
+      }
+      const mode = policy.default_mode_by_agent_name?.[subagentType];
+      if (mode !== "bg") {
+        toolBeforeLogger.info("task call passes policy", {
+          callID: input.callID,
+          subagent_type: subagentType,
+          mode: mode ?? "unset",
+        });
+        return;
+      }
+      // Force redirect: subagent is configured BG, throw to abort task call
+      toolBeforeLogger.warn("BG-policy enforcement: blocking task → force task_bg", {
+        callID: input.callID,
+        subagent_type: subagentType,
+      });
+      throw new Error(
+        `POLICY_VIOLATION: The subagent_type '${subagentType}' is configured for ` +
+          `BACKGROUND mode in the user's policy. The 'task' tool blocks the orchestrator ` +
+          `session, which the user does not want for this agent. ` +
+          `Retry this delegation using the 'task_bg' tool with the same parameters ` +
+          `(subagent_type, prompt, description). 'task_bg' returns immediately and ` +
+          `the result is delivered asynchronously when the subagent completes.`,
+      );
+    } catch (err) {
+      // Re-throw if it's our policy violation; swallow other errors (don't break
+      // unrelated task calls because we couldn't read the policy file).
+      if (err instanceof Error && err.message.startsWith("POLICY_VIOLATION:")) {
+        throw err;
+      }
+      toolBeforeLogger.warn("tool.execute.before non-fatal error", {
+        callID: input.callID,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   return {
     tool: {
       task_bg: taskBgTool,
@@ -219,18 +393,63 @@ export async function buildV14Hooks(
     event: eventHandler,
     "experimental.chat.system.transform": systemTransform,
     "experimental.chat.messages.transform": messagesTransform as never,
-  };
+    "tool.execute.before": toolExecuteBefore,
+    // tool.definition added via cast — local types don't declare this hook yet
+    // but OpenCode 1.14.28 SDK does (verified in investigation 27/04).
+    ["tool.definition" as string]: toolDefinition,
+  } as never;
 }
 
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
 
+/**
+ * Build the default resolver. Reads ~/.config/bg-subagents/policy.jsonc
+ * if present (written by @maicolextic/bg-subagents-control-tui), and falls
+ * back to HARDCODED_DEFAULT_POLICY otherwise.
+ *
+ * The control-tui plugin writes this file on every policy change. The server
+ * re-reads it via PolicyResolver.reload() — the loader closure here re-reads
+ * the file each call, so hot-reload works without explicit file watching.
+ */
 function buildDefaultResolver(): PolicyResolver {
-  const loaded: LoadedPolicy = {
-    policy: HARDCODED_DEFAULT_POLICY,
-    source: "default",
-    warnings: [],
-  };
-  return new PolicyResolver(async () => loaded);
+  return new PolicyResolver(async () => {
+    const filePath = resolvePolicyJsoncPath();
+    try {
+      const fs = await import("node:fs");
+      if (!fs.existsSync(filePath)) {
+        return {
+          policy: HARDCODED_DEFAULT_POLICY,
+          source: "default",
+          warnings: [],
+        };
+      }
+      const raw = fs.readFileSync(filePath, "utf8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      // Merge with hardcoded baseline (file overrides individual fields)
+      const policy = {
+        ...HARDCODED_DEFAULT_POLICY,
+        ...parsed,
+      } as typeof HARDCODED_DEFAULT_POLICY;
+      return {
+        policy,
+        source: "file",
+        warnings: [],
+      } as LoadedPolicy;
+    } catch (err) {
+      // On any read/parse error, fall back to hardcoded — never crash the host
+      return {
+        policy: HARDCODED_DEFAULT_POLICY,
+        source: "default",
+        warnings: [
+          `failed to load ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+        ],
+      };
+    }
+  });
+}
+
+function resolvePolicyJsoncPath(): string {
+  return path.join(os.homedir(), ".config", "bg-subagents", "policy.jsonc");
 }

@@ -18,10 +18,11 @@ export {
 } from "./paths.js";
 
 // NOTE: createLogger is intentionally NOT re-exported from this barrel.
-// The public API `createLogger(namespace)` is exported from the root index.ts
-// via `./logger.js` (file-routing version, zero-stdout guarantee — Phase 7.5).
-// The obs/logger.ts stderr-based factory is available for internal use via
-// direct import: `import { createLogger as createStderrLogger } from "./obs/logger.js"`.
+// The public API createLogger(namespace) is exported from the root index.ts
+// via the root-level logger module (file-routing version, zero-stdout
+// guarantee — Phase 7.5). The stderr-based factory in this folder remains
+// available for internal use via direct sibling import (createStderrLogger
+// alias), but the public surface is the root-level logger only.
 export {
   type CreateLoggerOptions,
   type LogFields,

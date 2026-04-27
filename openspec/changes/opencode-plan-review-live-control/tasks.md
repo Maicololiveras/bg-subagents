@@ -219,11 +219,14 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
 
 ## Phase 16: Manual E2E Validation (required before publish)
 
-- [ ] 16.1 **Build local**. `pnpm -r run build`. Verify dist output has `dist/index.js` (single main export — no `dist/tui-plugin/` expected, ADR-8). (Files: build check)
-- [ ] 16.2 **Link package to user's `~/.opencode`**. Use `pnpm link --global` or copy `dist/` + `package.json` into `~/.opencode/node_modules/@maicolextic/bg-subagents-opencode/`. Single entry in `opencode.json`: `"plugin": ["@maicolextic/bg-subagents-opencode"]`. No `/tui` entry needed. (Files: local link; user's `~/.opencode/opencode.json`)
+- [ ] 16.1 **Build local**. `pnpm -r run build`. Verify dist output has BOTH `dist/index.js` (server entry) AND `dist/tui-plugin/index.js` (TUI entry, rescued by ADR-9 via `./tui` subpath export). Confirm `package.json` exports map both `"."` and `"./tui"` correctly. (Files: build check, `packages/opencode/dist/`, `packages/opencode/package.json` exports field)
+- [ ] 16.2 **Link package to user's OpenCode install (DUAL CONFIG, ADR-9)**. Use `pnpm link --global` or copy `dist/` + `package.json` into `~/.opencode/node_modules/@maicolextic/bg-subagents-opencode/`. Configure TWO entry points:
+  - **Server side** in `opencode.json`: `"plugin": ["@maicolextic/bg-subagents-opencode"]`
+  - **TUI side** in `tui.json` (sibling file): `"plugin": ["@maicolextic/bg-subagents-opencode/tui"]`
+  Both files must coexist. Confirm OpenCode 1.14.23+ loads both (look for `plugin:booted` in `~/.opencode/logs/bg-subagents.log` for both server and TUI contexts). (Files: local link; user's `~/.opencode/opencode.json` AND `~/.opencode/tui.json`)
 - [ ] 16.3 **E2E scenario 1: Plan Review with 3 subagents (PolicyResolver)**. Open OpenCode with sdd-orchestrator active. Configure policy: `sdd-explore=background, sdd-apply=foreground, *=background`. Prompt that forces 3-subagent delegation (sdd-explore + sdd-apply + sdd-verify). Assert each task lands in the configured mode (no picker appears). Sub-scenario: run `/task policy bg` BEFORE the prompt, then assert all 3 go BG regardless of per-agent config. Sub-scenario: run `/task policy default` to clear override, assert per-agent config resumes. (Files: manual verification; capture screenshots into `docs/demo/`)
 - [ ] 16.4 **E2E scenario 2: Live Control via slash command**. Delegate to a foreground agent with a long prompt (~30s runtime). Type `/task move-bg <id>` in the chat mid-execution. Verify server plugin intercepts the command, cancel+re-spawn completes, new BG task_id reported in the chat reply, main session unblocks. (Files: manual verification + screenshots)
-- [ ] 16.5 **E2E scenario 3: `/task list`, `/task show`, `/task kill`**. Spawn 2 BG tasks. Run `/task list` — assert both visible in chat reply. `/task show <id>` — assert details. `/task kill <id>` — assert cancel. Mechanism: server-side slash command interception (not TUI api.command). (Files: manual verification)
+- [ ] 16.5 **E2E scenario 3: `/task list`, `/task show`, `/task kill`**. Spawn 2 BG tasks. Run `/task list` — assert both visible in chat reply. `/task show <id>` — assert details. `/task kill <id>` — assert cancel. Mechanism: server-side slash command interception PLUS reflected in TUI sidebar slot (Phase 12.7, rescued by ADR-9). Verify the sidebar shows the same 2 tasks live and updates on kill. (Files: manual verification)
 - [ ] 16.6 **E2E scenario 4: Completion delivery**. Wait for BG tasks to complete. Assert completion message appears in main chat once (not duplicated). (Files: manual verification)
 - [ ] 16.7 **E2E scenario 5: Legacy graceful degradation**. If a legacy OpenCode binary is accessible, repeat install and verify per-call picker still works. If not accessible, add unit-test-level regression evidence only. (Files: manual verification OR documented "not tested due to no legacy binary")
 - [ ] 16.8 **Capture demo**. Record asciinema or LICEcap GIFs of scenarios 1 and 2. Save to `docs/demo/plan-review.cast` and `docs/demo/live-control.gif`. Reference in `docs/upstream/gentle-ai-pr.md`. (Files: `docs/demo/plan-review.cast`, `docs/demo/live-control.gif`, updated `docs/upstream/gentle-ai-pr.md`)
@@ -233,9 +236,13 @@ Resolve the 6 design open questions before heavy refactor. Each spike is a minim
   - No `ts`/`level`/`msg`/`event_type` field names appear anywhere in TUI output.
   - No raw event dump text (e.g. no `v14-event`, `plugin:booted`, `delivery:primary-*`, `session.idle` appearing as chat text).
   - No ANSI escape sequences from bg-subagents appearing outside of standard OpenCode chrome.
-  - ONLY clean markdown task cards (format per Plan D v1.0 visual strategy) and native OpenCode chat bubbles visible.
+  - ONLY clean markdown task cards (format per ADR-9 v1.0 visual strategy — server-side cards + TUI sidebar slot) and native OpenCode chat bubbles visible.
   - Log file at `~/.opencode/logs/bg-subagents.log` (or platform equivalent) was created and contains the diagnostic output that would otherwise have appeared on stdout.
   (Files: manual verification + screenshot saved to `docs/demo/zero-pollution-smoke.png`)
+
+- [~] 16.10 ~~TUI sidebar live render verification~~ **DEFERRED TO v2** (2026-04-27). Discovered during Phase 16 manual E2E that OpenCode 1.14.28 TUI host requires Solid JSX components from slot render functions (not plain objects as our Phase 12.7 implementation does). Migrating to Solid in v1.0 is ~3-5 hours of throwaway work because v2 (separate "control panel" plugin) will be built with Solid + tsup from day one. For v1.0, recommend `opencode-subagent-statusline` (by @Joaquinvesapa) as companion plugin — it covers the read-only monitor use case. v1.0 ships with sidebar slot register call still in code (no harm) but renders empty until v2 supersedes. See engram topic `sdd/opencode-plan-review-live-control/decision/v1-tui-sidebar-deferred-to-v2`.
+
+- [~] 16.11 ~~TUI plan review dialog verification~~ **DEFERRED TO v2** (2026-04-27). Same reason as 16.10. The full interactive control panel (BG/FG picker dialog, policy editor, auto-routing config) is the v2 plugin's flagship feature. v1.0 ships with server-side Plan Review intact (PolicyResolver chain works without TUI dialog). User-facing impact: instead of an interactive dialog, v1.0 uses the server-side fallback (text output describing the plan). v2 brings the rich TUI dialog.
 
 ---
 

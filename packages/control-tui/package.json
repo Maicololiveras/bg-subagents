@@ -1,0 +1,75 @@
+{
+  "name": "@maicolextic/bg-subagents-control-tui",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Active control panel TUI plugin for OpenCode — sidebar widget + DialogSelect editor for bg-subagents policies, blocking modes, and SDD stage routing. Complementary to opencode-subagent-statusline (read-only monitor).",
+  "license": "MIT",
+  "author": "Michael Jimenez <maicoljimenez360@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maicololiveras/bg-subagents.git",
+    "directory": "packages/control-tui"
+  },
+  "type": "module",
+  "main": "./dist/tui.js",
+  "types": "./dist/tui.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@maicolextic/bg-subagents-core": "workspace:*",
+    "@maicolextic/bg-subagents-opencode": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.28",
+    "@opencode-ai/sdk": ">=1.14.28",
+    "@opentui/core": "*",
+    "@opentui/solid": "*",
+    "solid-js": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.14.28",
+    "@opencode-ai/sdk": "1.14.28",
+    "@opentui/core": "latest",
+    "@opentui/solid": "latest",
+    "@types/node": "22.10.5",
+    "esbuild-plugin-solid": "^0.6.0",
+    "solid-js": "^1.9.0",
+    "tsup": "^8.5.1",
+    "typescript": "5.7.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "tui",
+    "subagent",
+    "control-panel",
+    "policy-editor",
+    "bg-subagents"
+  ]
+}
