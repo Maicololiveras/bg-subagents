@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../tooling/tsconfig/library.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "coverage", "**/*.test.ts", "**/*.spec.ts"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../opencode" }
+  ]
+}

@@ -1,7 +1,7 @@
 /**
  * Batch 9 polish tests for /task command flag parsing + color helpers.
  *
- * Does NOT overwrite hooks/task-command.test.ts — covers new flags only.
+ * Does NOT overwrite host-compat/legacy/task-command.test.ts — covers new flags only.
  */
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -15,7 +15,7 @@ import {
   parseTaskCommand,
   handleTaskSlashCommand,
   parseSince,
-} from "../hooks/task-command.js";
+} from "../host-compat/legacy/task-command.js";
 import { makeColors, resolveColorsEnabled } from "../commands/colors.js";
 
 // -----------------------------------------------------------------------------

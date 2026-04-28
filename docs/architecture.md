@@ -11,7 +11,7 @@ A contributor-oriented overview of how bg-subagents is structured. Read this bef
           |
 @maicolextic/bg-subagents-core       (domain runtime — no host deps)
           |
-@maicolextic/bg-subagents-opencode   (v0.1 — OpenCode adapter)
+@maicolextic/bg-subagents-opencode   (v1.0 — OpenCode adapter: server plugin + TUI plugin)
 @maicolextic/bg-subagents-claude-code (v0.2 — roadmap)
 @maicolextic/bg-subagents-mcp        (v0.3 — roadmap)
 ```
@@ -20,72 +20,199 @@ A contributor-oriented overview of how bg-subagents is structured. Read this bef
 
 `core` is pure domain — policy, registry, picker, invoker, history, CLI commands. It depends on `protocol` and has no knowledge of any specific host (OpenCode, Claude Code, etc.).
 
-Each adapter is a thin wiring layer that bridges core's interfaces to a host-specific plugin surface. The OpenCode adapter is the only shipped adapter in v0.1.
+Each adapter is a thin wiring layer that bridges core's interfaces to a host-specific plugin surface. The OpenCode adapter is the only shipped adapter in v1.0. It exposes **two separate entry points** — the server plugin (loaded via `opencode.json`) and the TUI plugin (loaded via `tui.json`).
 
 ---
 
-## Component diagram
+## v1.0 Architecture overview
 
 ```
 OpenCode session
-      |
-  plugin.ts  (bootstraps everything once per session)
-      |
-  ┌───────────────────────────────────────────────────────┐
-  │  Hooks registered with OpenCode                       │
-  │                                                       │
-  │  tool              → registerTaskBgTool               │
-  │  tool.execute.before → interceptTaskTool              │
-  │  chat.params       → steerChatParams                  │
-  │  (bus.onEvent)     → wireBusEvents (primary delivery) │
-  │  (chat.message)    → chatMessageFallback              │
-  └───────────────────┬───────────────────────────────────┘
-                      │
-              ┌───────┴────────┐
-              │     core       │
-              │                │
-              │  PolicyResolver│  ← reads policy.jsonc via PolicyLoader
-              │  TaskRegistry  │  ← in-memory task state + onComplete bus
-              │  HistoryStore  │  ← JSONL on disk, gzip rotation
-              │  Picker        │  ← ClackPicker (TTY) or BarePicker (headless)
-              │  StrategyChain │  ← picks invocation strategy
-              └────────────────┘
+      │
+      ├─── SERVER PLUGIN  (loaded from opencode.json)
+      │         │
+      │    plugin.ts   ← detects host version → routes to v14 or legacy builder
+      │         │
+      │    ┌────┴──────────────────────────────────────────────────────────┐
+      │    │  host-compat/                                                 │
+      │    │                                                               │
+      │    │  version-detect.ts      ← inspects ctx.client vs ctx.bus     │
+      │    │                                                               │
+      │    │  v14/                   ← OpenCode 1.14+ (primary path)      │
+      │    │    tool-register.ts     ← registers task_bg with Zod schema  │
+      │    │    system-transform.ts  ← appends task_bg to system prompt   │
+      │    │    event-handler.ts     ← logs session lifecycle events      │
+      │    │    delivery.ts          ← primary + fallback completion path  │
+      │    │    messages-transform.ts← LLM→PolicyResolver→rewriteParts    │
+      │    │    slash-commands.ts    ← /task list|show|kill|logs|move-bg  │
+      │    │    index.ts             ← buildV14Hooks: wires all the above  │
+      │    │                                                               │
+      │    │  legacy/                ← OpenCode <1.14 (graceful degrade)  │
+      │    │    tool-register.ts     ← JSON-schema task_bg registration   │
+      │    │    tool-before.ts       ← per-call picker intercept          │
+      │    │    chat-params.ts       ← injects task_bg system prompt      │
+      │    │    event.ts             ← bus.onEvent subscriber             │
+      │    │    chat-message-fallback.ts ← 2000ms synthetic message      │
+      │    │    task-command.ts      ← /task slash commands (legacy)      │
+      │    │    index.ts             ← buildLegacyHooks: wires all above  │
+      │    └───────────────────────────────────────────────────────────────┘
+      │         │
+      │    ┌────┴────────────────────────┐
+      │    │  core (@maicolextic/bg-subagents-core)                       │
+      │    │                                                               │
+      │    │  TaskRegistry    ← in-memory task state + onComplete bus     │
+      │    │  PolicyResolver  ← reads policy.jsonc; resolveBatch()        │
+      │    │  HistoryStore    ← JSONL on disk, gzip rotation              │
+      │    │  StrategyChain   ← picks invocation strategy                 │
+      │    │  createLogger    ← file-routed logger (zero stdout)          │
+      │    └─────────────────────────────────────────────────────────────-┘
+      │         │
+      │    SharedPluginState  ← Symbol.for("@maicolextic/bg-subagents/shared")
+      │         │                 on globalThis — bridges server → TUI
+      │         │
+      └─── TUI PLUGIN  (loaded from tui.json via "@maicolextic/bg-subagents-opencode/tui")
+                │
+           tui-plugin/
+             index.ts           ← TUI entry point; id: "bg-subagents-tui" REQUIRED
+             shared-state.ts    ← reads globalThis symbol → TaskRegistry + PolicyStore
+             sidebar.ts         ← sidebar_content slot; getSidebarData()
+             keybinds.ts        ← Ctrl+B / Ctrl+F / ↓ via api.command.register
+             plan-review-dialog.ts ← (reserved; wired in v1.1)
 ```
 
 ---
 
-## Hook wiring in OpenCode
+## Data flow (server side)
 
-The plugin registers five integration points:
+```
+LLM generates tool call
+      │
+      ▼
+messages-transform hook (experimental.chat.messages.transform)
+      │
+      ▼
+PolicyResolver.resolveBatch(tasks[])
+      │
+      ├── mode = "background" → rewriteParts replaces task → task_bg in message parts
+      ├── mode = "foreground" → parts pass through unchanged
+      └── mode = "ask"        → (no picker in v1.0; falls back to policy default)
+      │
+      ▼
+Rewritten message parts forwarded to OpenCode host
+      │
+      ▼
+TaskRegistry.spawn(task_bg args) → { task_id, status: "running" }
+      │
+      ▼
+TaskRegistry.onComplete(event)
+      │
+      ├─→ primary: client.session.message.create(...)   [v14 path]
+      │              OR bus.emit("bg-subagents/task-complete") [legacy path]
+      └─→ fallback: session.writeAssistantMessage(...)  [2000ms timer]
+```
+
+## UI flow (TUI side)
+
+```
+User presses Ctrl+B / Ctrl+F / ↓
+      │
+      ▼
+api.command.register callback fires (keybinds.ts)
+      │
+      ▼
+SharedPluginState.current() — reads globalThis Symbol
+      │
+      ├── undefined → api.ui.toast("bg-subagents not ready yet")
+      └── state     → getSidebarData() filters tasks by mode/status
+                          │
+                          ▼
+                     api.ui.dialog.replace(
+                       () => api.ui.DialogSelect({ title, options, onSelect })
+                     )
+
+User opens OpenCode sidebar
+      │
+      ▼
+TUI host invokes sidebar_content slot render (sidebar.ts)
+      │
+      ▼
+getSidebarData() → SidebarTaskRow[] (sorted: running first, terminal by recency)
+      │
+      ▼
+Returns data object to TUI host for rendering
+(Phase v1.1: upgrades to real SolidJS JSX component via @opentui/solid)
+```
+
+---
+
+## Component responsibilities
+
+| Component | Responsibility |
+|-----------|---------------|
+| `plugin.ts` | Session entry point. Detects host version, calls `buildV14Hooks` or `buildLegacyHooks`, wires disposal. |
+| `host-compat/version-detect.ts` | Inspects ctx shape to return `"v14"` or `"legacy"`. Honors `BG_SUBAGENTS_FORCE_COMPAT` env override. |
+| `host-compat/v14/tool-register.ts` | Registers `task_bg` tool with Zod schema for OpenCode 1.14+ tool surface. |
+| `host-compat/v14/system-transform.ts` | Appends task_bg advertisement to the system prompt array when plugin is booted. |
+| `host-compat/v14/event-handler.ts` | Read-only event consumer; logs session lifecycle events (session.idle, session.created, etc). |
+| `host-compat/v14/delivery.ts` | Coordinates primary (`client.session.message.create`) + fallback delivery with deduplication. |
+| `host-compat/v14/messages-transform.ts` | Intercepts LLM message parts, calls `PolicyResolver.resolveBatch`, rewrites task → task_bg. |
+| `host-compat/v14/slash-commands.ts` | Implements `/task list`, `/task show`, `/task kill`, `/task logs`, `/task move-bg`, `/task policy` via `api.command` interception. Exports `TaskPolicyStore`. |
+| `host-compat/v14/index.ts` | `buildV14Hooks(ctx)` — assembles all v14 hooks and initializes SharedPluginState. |
+| `host-compat/legacy/` | Mirror of v14 using the pre-1.14 OpenCode API surface. Per-call picker intercept instead of batch PolicyResolver. |
+| `tui-plugin/index.ts` | TUI entry point. `id: "bg-subagents-tui"` REQUIRED. Wires sidebar, keybinds, lifecycle. |
+| `tui-plugin/shared-state.ts` | Singleton bridge via `Symbol.for("@maicolextic/bg-subagents/shared")` on `globalThis`. Server writes; TUI reads. |
+| `tui-plugin/sidebar.ts` | `sidebar_content` slot plugin. `getSidebarData()` maps TaskRegistry to sorted `SidebarTaskRow[]`. |
+| `tui-plugin/keybinds.ts` | Three TuiCommand entries: Ctrl+B (BG tasks), Ctrl+F (FG tasks), ↓ (all tasks). Dialogs via `api.ui.dialog.replace`. |
+| `tui-plugin/plan-review-dialog.ts` | Reserved for v1.1 — plan-review trigger wiring (not wired in v1.0). |
+
+---
+
+## Hook wiring table
+
+### v14 hooks (OpenCode 1.14+)
 
 | Hook | File | What it does |
 |------|------|-------------|
-| `tool` | `hooks/tool-register.ts` | Registers the `task_bg` tool definition. The model can call it directly. |
-| `tool.execute.before` | `hooks/tool-before.ts` | Intercepts every `task` call. Resolves policy → prompts picker → either passes through or swaps to `task_bg`. |
-| `chat.params` | `hooks/chat-params.ts` | Appends a system-prompt addendum describing `task_bg` alongside `task`. Only fires if the plugin booted successfully. |
-| bus event (emit) | `hooks/event.ts` | Subscribes to `TaskRegistry.onComplete` and re-publishes via `bus.emit("bg-subagents/task-complete", ...)`. |
-| `chat.message` fallback | `hooks/chat-message-fallback.ts` | Arms a 2000 ms timer per completion. If the bus delivery hasn't acked by then, injects a synthetic assistant message. |
+| `tool` | `v14/tool-register.ts` | Registers `task_bg` with Zod 3 raw shape. |
+| `experimental.chat.messages.transform` | `v14/messages-transform.ts` | Batch-resolves policy; rewrites task → task_bg in LLM message parts. |
+| `experimental.chat.system.transform` | `v14/system-transform.ts` | Appends task_bg advertisement to `output.system[]`. |
+| `event` | `v14/event-handler.ts` | Logs session lifecycle events (read-only). |
+| delivery (primary) | `v14/delivery.ts` | `client.session.message.create` on task completion. |
+| delivery (fallback) | `v14/delivery.ts` | 2000ms timer writes synthetic assistant message if primary fails. |
+| `api.command` | `v14/slash-commands.ts` | Intercepts `/task *` and `/task policy *` slash commands. |
+
+### Legacy hooks (OpenCode <1.14)
+
+| Hook | File | What it does |
+|------|------|-------------|
+| `tool` | `legacy/tool-register.ts` | Registers `task_bg` with JSON schema. |
+| `tool.execute.before` | `legacy/tool-before.ts` | Intercepts every `task` call; per-call picker → foreground or task_bg swap. |
+| `chat.params` | `legacy/chat-params.ts` | Appends task_bg system prompt addendum. |
+| bus event (emit) | `legacy/event.ts` | Subscribes to `TaskRegistry.onComplete` → `bus.emit`. |
+| `chat.message` fallback | `legacy/chat-message-fallback.ts` | 2000ms timer; fires if bus delivery hasn't acked. |
+| `/task` commands | `legacy/task-command.ts` | Legacy slash command handler. |
+
+### TUI hooks (tui.json path, OpenCode 1.14.23+)
+
+| Hook | File | What it does |
+|------|------|-------------|
+| `api.slots.register` | `tui-plugin/sidebar.ts` | Registers `sidebar_content` slot; renders `SidebarTaskRow[]` on each host render cycle. |
+| `api.command.register` | `tui-plugin/keybinds.ts` | Registers 3 TuiCommands: Ctrl+B, Ctrl+F, ↓ with `api.ui.dialog.replace` handlers. |
+| `api.lifecycle.onDispose` | `tui-plugin/index.ts` | Clears polling interval on TUI plugin shutdown. |
 
 ---
 
-## Completion delivery contract
+## SharedPluginState bridge
 
-Two paths compete for delivery; only one fires per task:
+The server plugin and TUI plugin run in the same Bun process but are loaded by different plugin loaders (server loader reads `opencode.json`; TUI loader reads `tui.json`). They share state via a process-global symbol:
 
 ```
-TaskRegistry.onComplete(event)
-      │
-      ├─→  bus.emit("bg-subagents/task-complete", ...)   [PRIMARY]
-      │         │
-      │         └─→  ack: fallback.markDelivered(task_id)  → timer cancelled
-      │
-      └─→  setTimeout(2000ms)                             [FALLBACK]
-                │
-                └─→  session.writeAssistantMessage(...)
-                     "[bg-subagents] Task tsk_... completed with status COMPLETED."
+Symbol.for("@maicolextic/bg-subagents/shared")
 ```
 
-If the OpenCode session doesn't have a `bus.emit` surface (headless, test environments), the fallback is the only delivery path. This is deliberate — the plugin degrades gracefully.
+- **Server writes** (at boot, from `buildV14Hooks`): `registerFromServer({ registry, policyStore })`
+- **TUI reads** (at boot + on every render): `current()` → `SharedPluginState | undefined`
+- Race at startup: TUI may boot before the server plugin. All TUI code handles `current() === undefined` gracefully — sidebar renders empty, keybinds show a toast.
 
 ---
 
@@ -107,16 +234,65 @@ The OpenCode adapter prepends `OpenCodeTaskSwapStrategy` before the canonical co
 
 ---
 
+## Completion delivery contract
+
+Two paths compete for delivery; only one fires per task:
+
+```
+TaskRegistry.onComplete(event)
+      │
+      ├─→  PRIMARY (v14): client.session.message.create(...)
+      │         │
+      │         └─→  ack: registry.markDelivered(task_id) → fallback timer cancelled
+      │
+      ├─→  PRIMARY (legacy): bus.emit("bg-subagents/task-complete", ...)
+      │         │
+      │         └─→  ack: fallback.markDelivered(task_id) → timer cancelled
+      │
+      └─→  FALLBACK: setTimeout(2000ms)
+                │
+                └─→  session.writeAssistantMessage(...)
+                     "[bg-subagents] Task tsk_... completed with status COMPLETED."
+```
+
+If the OpenCode session doesn't have the primary delivery surface available (headless, test environments), the fallback is the only delivery path. This is deliberate — the plugin degrades gracefully.
+
+---
+
 ## State storage
 
 | What | Where | Lifetime |
 |------|-------|---------|
 | TaskRegistry | In-memory (per session) | Cleared on session end |
+| TaskPolicyStore | In-memory (per session, shared via globalThis) | Cleared on session end |
+| SharedPluginState | `globalThis[Symbol.for(...)]` | Per-process; written at server boot |
 | HistoryStore | JSONL files on disk | `retention_days` (default 30) |
 | Policy | Loaded from `~/.config/bg-subagents/policy.jsonc` | Reloaded on `PolicyResolver.reload()` |
 | Host context | In-memory map keyed by session_id | Cleared by `clearHostContext` |
 
 History files live at `~/.local/share/bg-subagents/history/` (Linux/macOS) or `%APPDATA%\bg-subagents\history\` (Windows). The path is resolved by `resolveHistoryPath()` from `@maicolextic/bg-subagents-core`.
+
+Log file lives at `~/.opencode/logs/bg-subagents.log` (per `packages/core/src/logger.ts`).
+
+---
+
+## Install — two config files
+
+Users must declare the plugin in **both** files to get the full v1.0 experience:
+
+```json
+// opencode.json — server plugin (PolicyResolver, /task commands, completion delivery)
+{
+  "plugins": ["@maicolextic/bg-subagents-opencode"]
+}
+
+// tui.json — TUI plugin (sidebar, Ctrl+B/F/↓ keybinds)
+{
+  "plugins": ["@maicolextic/bg-subagents-opencode/tui"]
+}
+```
+
+The server plugin is functional standalone (server-side features work without the TUI plugin). The TUI plugin requires the server plugin to be booted first for `SharedPluginState` to be available.
 
 ---
 

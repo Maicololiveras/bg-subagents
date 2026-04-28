@@ -1,0 +1,42 @@
+schema: spec-driven
+
+context: |
+  Stack: TypeScript 5.7.3, Node >=22, pnpm 9.15.9 workspaces (monorepo)
+  Packages: 3 published (@maicolextic/bg-subagents-{protocol,core,opencode})
+  Architecture: Plugin/adapter pattern — protocol (contracts) → core (pure domain) → opencode (host adapter)
+  Testing: Vitest 2.1.8 (432 tests gate, run via `pnpm -r run test`)
+  Releases: Changesets + GitHub Actions release.yml with OIDC Trusted Publishing
+  Style: Conventional commits (fix:, feat:, chore:, docs:); branches `fix/|feat/|chore/...`
+  Docs: docs/ in root (architecture, policy-schema, release-process, upstream drafts)
+  NO AI attribution on commits (per user rule)
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected packages (protocol/core/opencode/scripts)
+    - Consider host API version compatibility (legacy + OpenCode 1.14+)
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Separate specs by package when scope spans multiple
+  design:
+    - Include sequence diagrams for complex flows (picker, live control, host detection)
+    - Document architecture decisions with rationale (ADR-style)
+    - Call out host-API version branches explicitly
+  tasks:
+    - Group by phase (infrastructure → core → adapter → tests → docs → release)
+    - Use hierarchical numbering (1.1, 1.2 ...)
+    - Keep tasks completable in one session
+    - Each task MUST list the exact files it touches
+  apply:
+    - Follow existing code patterns (zero runtime deps, hook-based plugin)
+    - Load relevant skills (claude-api, go-testing if applicable)
+    tdd: true
+    test_command: "pnpm -r run test"
+  verify:
+    test_command: "pnpm -r run test"
+    build_command: "pnpm -r run build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
+    - Preserve lineage for PR upstream to Gentleman-Programming/gentle-ai

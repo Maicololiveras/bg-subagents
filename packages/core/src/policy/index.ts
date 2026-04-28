@@ -36,3 +36,12 @@ export {
   type ResolvedPolicy,
   type ResolvedPolicySource,
 } from "./resolver.js";
+
+export {
+  resolveBatch,
+  type BatchEntry as PolicyBatchEntry,
+  type BatchPolicyInput,
+  type FlatPolicyConfig,
+  type PolicyDecision,
+  type SessionOverride,
+} from "./resolve-batch.js";
