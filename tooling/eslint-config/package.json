@@ -9,9 +9,9 @@
     "index.cjs"
   ],
   "dependencies": {
-    "@typescript-eslint/eslint-plugin": "8.20.0",
-    "@typescript-eslint/parser": "8.20.0",
-    "eslint": "9.17.0",
-    "typescript-eslint": "8.20.0"
+    "@typescript-eslint/eslint-plugin": "8.59.1",
+    "@typescript-eslint/parser": "8.59.1",
+    "eslint": "10.2.1",
+    "typescript-eslint": "8.59.1"
   }
 }
