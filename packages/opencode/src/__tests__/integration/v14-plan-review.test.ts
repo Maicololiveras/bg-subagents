@@ -17,7 +17,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
+import { buildV14Hooks } from "../../host-compat/v14/index.js";
 import { buildMessagesTransformHook } from "../../host-compat/v14/messages-transform.js";
 import {
   createTaskPolicyStore,
@@ -59,6 +63,22 @@ function makeSilentLogger() {
     error: vi.fn(),
     child: vi.fn(),
     flush: vi.fn(async () => {}),
+  };
+}
+
+function makeV14Input() {
+  const promptSpy = vi.fn(async () => ({
+    data: { info: { id: "msg_v14_1", role: "user" } },
+  }));
+  return {
+    client: { session: { prompt: promptSpy } },
+    project: { id: "proj_v14" },
+    directory: "/tmp/work",
+    worktree: "/tmp/work",
+    serverUrl: new URL("http://localhost:4096"),
+    experimental_workspace: { register: vi.fn() },
+    $: undefined as unknown,
+    promptSpy,
   };
 }
 
@@ -174,6 +194,78 @@ describe("v14 Plan Review E2E — 3-task turn with mixed policy", () => {
     expect(byCallId.get("c1")?.mode).toBe("background");
     expect(byCallId.get("c2")?.mode).toBe("background");
     expect(byCallId.get("c3")?.mode).toBe("foreground");
+  });
+});
+
+describe("v14 server path — policy file and runtime command routing", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("policy file routes sdd-explore to task_bg while sdd-apply and sdd-verify stay task", async () => {
+    const oldXdgConfigHome = process.env["XDG_CONFIG_HOME"];
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bg-subagents-v14-e2e-"));
+    process.env["XDG_CONFIG_HOME"] = tmpDir;
+
+    try {
+      const configDir = path.join(tmpDir, "bg-subagents");
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(
+        path.join(configDir, "policy.jsonc"),
+        JSON.stringify({
+          default_mode_by_agent_name: {
+            "sdd-explore": "bg",
+            "sdd-apply": "fg",
+            "sdd-verify": "fg",
+          },
+        }),
+        "utf8",
+      );
+
+      const hooks = await buildV14Hooks(makeV14Input() as never);
+      const output = makeOutput([
+        makeTaskPart("policy-file-explore", "sdd-explore", "explore"),
+        makeTaskPart("policy-file-apply", "sdd-apply", "apply"),
+        makeTaskPart("policy-file-verify", "sdd-verify", "verify"),
+      ]);
+
+      await hooks["experimental.chat.messages.transform"]!(
+        { sessionID: "sess_policy_file_e2e", model: {} },
+        output as never,
+      );
+
+      expect(toolParts(output.messages[0]!.parts).map((p) => p.toolName)).toEqual([
+        "task_bg",
+        "task",
+        "task",
+      ]);
+    } finally {
+      if (oldXdgConfigHome === undefined) {
+        delete process.env["XDG_CONFIG_HOME"];
+      } else {
+        process.env["XDG_CONFIG_HOME"] = oldXdgConfigHome;
+      }
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("/task policy bg via chat.message affects the wired messages.transform hook", async () => {
+    const hooks = await buildV14Hooks(makeV14Input() as never);
+
+    await hooks["chat.message"]!({
+      type: "chat.message",
+      sessionID: "sess_policy_hook_e2e",
+      message: {
+        role: "user",
+        parts: [{ type: "text", text: "/task policy bg" }],
+      },
+    });
+
+    const output = makeOutput([makeTaskPart("policy-hook-verify", "sdd-verify", "verify")]);
+    await hooks["experimental.chat.messages.transform"]!(
+      { sessionID: "sess_policy_hook_e2e", model: {} },
+      output as never,
+    );
+
+    expect(toolParts(output.messages[0]!.parts).map((p) => p.toolName)).toEqual(["task_bg"]);
   });
 });
 
