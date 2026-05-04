@@ -24,7 +24,7 @@ Works in any modern browser (React 18 + Babel Standalone via unpkg — no build,
 **Server layer (OpenCode 1.14.22+)**
 
 - `task_bg` tool registered via Zod 4 schema — LLM-callable, returns `{ task_id, status: "running" }` immediately
-- `PolicyResolver` — per-agent default mode (`background` / `foreground`) configured in `opencode.json`, with `*` wildcard fallback
+- `PolicyResolver` — per-agent default mode (`background` / `foreground`) loaded from `~/.config/bg-subagents/policy.jsonc`
 - `messages.transform` interceptor — rewrites multi-agent batches before they reach the LLM, no picker UI required
 - `/task policy` — session-scoped override (force all bg / fg / clear)
 - `/task list`, `/task show`, `/task logs`, `/task kill`, `/task move-bg` — full task lifecycle from chat
@@ -35,7 +35,7 @@ Works in any modern browser (React 18 + Babel Standalone via unpkg — no build,
 
 - Sidebar slot: live background task list (status, agent name, elapsed time)
 - `Ctrl+B` / `Ctrl+F` / `↓` keybinds for task focus and panel navigation
-- Plan-review dialog (`api.ui.DialogSelect`) for interactive per-task BG/FG override on multi-delegation turns
+- Policy/task visibility controls via sidebar and keybinds; no verified runtime picker is required for routing
 - Loaded via `tui.json` — independent of the server plugin; server plugin works without it
 
 ---
@@ -64,17 +64,11 @@ pnpm add @maicolextic/bg-subagents-opencode
 
 ```json
 {
-  "plugin": ["@maicolextic/bg-subagents-opencode"],
-  "bgSubagents": {
-    "policy": {
-      "sdd-explore":  "background",
-      "sdd-apply":    "foreground",
-      "sdd-verify":   "foreground",
-      "*":            "background"
-    }
-  }
+  "plugin": ["@maicolextic/bg-subagents-opencode"]
 }
 ```
+
+Routing policy is read from `~/.config/bg-subagents/policy.jsonc`, not from `opencode.json`.
 
 **Step 3 (optional) — wire the TUI plugin** in `~/.config/opencode/tui.json`:
 
@@ -94,41 +88,50 @@ The TUI plugin requires the `id` field in its default export (handled internally
 
 ## Quick Start
 
-Minimal `opencode.json` to get started with everything running in the background by default:
+Minimal `opencode.json`:
 
 ```json
 {
-  "plugin": ["@maicolextic/bg-subagents-opencode"],
-  "bgSubagents": {
-    "policy": {
-      "*": "background"
-    }
+  "plugin": ["@maicolextic/bg-subagents-opencode"]
+}
+```
+
+Policy file for SDD-safe routing:
+
+```jsonc
+{
+  "default_mode_by_agent_name": {
+    "sdd-explore": "background",
+    "sdd-apply": "foreground",
+    "sdd-verify": "foreground"
   }
 }
 ```
 
-Run a multi-agent prompt — all `task` calls are transparently rewritten to `task_bg`. Use `/task list` to see running tasks.
+Run a multi-agent prompt. Background agents are rewritten to `task_bg`; foreground agents stay on native `task`. Use `/task list` to see running tasks.
 
 ---
 
 ## Configuration Reference
 
-All config lives under the `bgSubagents` key in `opencode.json`.
+Routing config lives in `~/.config/bg-subagents/policy.jsonc`.
 
-```json
+```jsonc
 {
-  "bgSubagents": {
-    "policy": {
-      "<agent_name>": "background" | "foreground",
-      "*":            "background" | "foreground"
-    }
+  "default_mode_by_agent_name": {
+    "<agent_name>": "background" | "foreground",
+    "sdd-explore": "background",
+    "sdd-apply": "foreground",
+    "sdd-verify": "foreground"
   }
 }
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `bgSubagents.policy` | `Record<string, "background" \| "foreground">` | `{ "*": "background" }` | Per-agent default mode. Exact name match; `"*"` is the wildcard fallback applied when no specific key matches. |
+| `default_mode_by_agent_name` | `Record<string, "background" \| "foreground">` | policy default | Per-agent default mode. Exact name match by subagent name. Legacy `bg`/`fg` values are accepted and normalized to `background`/`foreground`. |
+
+`bgSubagents.policy` was an older flat `opencode.json` shape. Treat it as historical unless you are explicitly testing a compatibility path.
 
 ---
 
@@ -142,7 +145,7 @@ Override PolicyResolver for the current session.
 |------|--------|
 | `bg` | Force all agents to background for this session |
 | `fg` | Force all agents to foreground for this session |
-| `default` | Clear override; per-agent config from `opencode.json` resumes |
+| `default` | Clear override; per-agent config from `policy.jsonc` resumes |
 
 Example:
 
@@ -203,7 +206,8 @@ Zero stdout guarantee: no raw JSON, no event dumps, no ANSI from bg-subagents ap
 
 ```
 opencode.json  ──── plugin loader ───► server plugin (packages/opencode/src)
-                                         │
+policy.jsonc   ──── loadPolicy() ─────► PolicyResolver
+                                          │
                     ┌────────────────────┤
                     │                    │
               host-compat/v14/     plan-review/
@@ -219,7 +223,7 @@ opencode.json  ──── plugin loader ───► server plugin (packages/o
 tui.json  ────── TUI plugin loader ──► tui-plugin/
                                          ├── shared-state
                                          ├── sidebar
-                                         ├── plan-review-dialog
+                                          ├── plan-review-dialog (reserved/deferred)
                                          ├── keybinds
                                          └── index (id: "bg-subagents-tui")
 ```

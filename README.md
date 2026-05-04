@@ -48,13 +48,13 @@ yarn add @maicolextic/bg-subagents-opencode
 
 ### Wire into OpenCode config
 
-v1.0 requires **two config file entries** — one for the server plugin, one for the TUI plugin.
+v1.0 uses the OpenCode server plugin plus an optional TUI plugin.
 
 **`~/.config/opencode/opencode.json`** (or project-local `opencode.json`):
 
 ```json
 {
-  "plugins": [
+  "plugin": [
     "@maicolextic/bg-subagents-opencode"
   ]
 }
@@ -64,8 +64,10 @@ v1.0 requires **two config file entries** — one for the server plugin, one for
 
 ```json
 {
-  "plugins": [
-    "@maicolextic/bg-subagents-opencode/tui"
+  "plugin": [
+    {
+      "module": "@maicolextic/bg-subagents-opencode/tui"
+    }
   ]
 }
 ```
@@ -78,19 +80,19 @@ OpenCode will call `(await import("@maicolextic/bg-subagents-opencode")).default
 
 ## Quickstart
 
-Once the plugin is registered, no additional code is needed. Every `task` call goes through the picker:
+Once the plugin is registered, routing is policy-driven. Configure SDD agents in `~/.config/bg-subagents/policy.jsonc`:
 
+```jsonc
+{
+  "default_mode_by_agent_name": {
+    "sdd-explore": "background",
+    "sdd-apply": "foreground",
+    "sdd-verify": "foreground"
+  }
+}
 ```
-You: research the public API of stripe/stripe-node and summarize rate-limit strategies
 
-OpenCode (before spawning the subagent):
-  Run "subagent:researcher" in:
-  > background  ← forks immediately, you keep chatting
-    foreground  ← blocks until done (default OpenCode behavior)
-  [2s timeout → foreground]
-```
-
-If you press Enter or select **background**, the subagent is spawned as a `task_bg` call and returns a `task_id` immediately. You'll receive a notification when it finishes.
+Background agents are rewritten to `task_bg` and return a `task_id` immediately. Foreground agents remain native `task` calls and block by design.
 
 You can also call `task_bg` directly in your prompts:
 
@@ -142,12 +144,12 @@ Create `~/.config/bg-subagents/policy.jsonc` to customize behavior:
   // Per-name override — highest precedence
   "default_mode_by_agent_name": {
     "researcher": "background",
-    "reviewer":   "ask"
+    "reviewer":   "foreground"
   },
 
   // Per-type default — middle precedence
   "default_mode_by_agent_type": {
-    "subagent": "ask",
+    "subagent": "background",
     "tool":     "foreground"
   },
 
@@ -178,17 +180,14 @@ See [docs/policy-schema.md](docs/policy-schema.md) for the full field reference.
 
 ## Troubleshooting
 
-**No picker appears when a `task` is invoked.**
-The picker requires a TTY. In headless environments (CI, piped shells) the picker auto-skips and uses the policy default. Check `default_mode_by_agent_type` in your policy file to control the fallback.
+**A `task` is routed differently than expected.**
+Check `~/.config/bg-subagents/policy.jsonc`. Canonical modes are `background` and `foreground`; legacy `bg` and `fg` are accepted and normalized.
 
 **Protocol version mismatch warning on startup.**
 Your installed `@maicolextic/bg-subagents-protocol` and the OpenCode adapter use different MAJOR versions. A MAJOR mismatch is a hard error; a MINOR mismatch is a warning. Run `pnpm update @maicolextic/bg-subagents-opencode` to align.
 
 **`task_bg` tool does not appear in the model's context.**
-The `chat.params` hook only injects the tool description if the plugin booted successfully for the current session. Check the OpenCode plugin log for `plugin:booted` or look for boot errors. Ensure the plugin is listed in `config.json` `plugins` array.
-
-**Picker shows but selection times out and falls back to foreground.**
-The default picker timeout is 2000 ms. Increase `timeout_ms` in `policy.jsonc`, or set it to `0` to disable the timeout entirely.
+The system prompt hook only injects the tool description if the plugin booted successfully for the current session. Check the OpenCode plugin log for `plugin:booted` or look for boot errors. Ensure the plugin is listed in `opencode.json` under the `plugin` array.
 
 **Where are the task logs stored?**
 JSONL logs live at `~/.local/share/bg-subagents/history/` (Linux/Mac) or `%APPDATA%\bg-subagents\history\` (Windows). Files rotate at 10 MB by default and are retained for 30 days.

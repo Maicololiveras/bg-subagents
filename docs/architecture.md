@@ -72,12 +72,12 @@ OpenCode session
       │         │
       └─── TUI PLUGIN  (loaded from tui.json via "@maicolextic/bg-subagents-opencode/tui")
                 │
-           tui-plugin/
-             index.ts           ← TUI entry point; id: "bg-subagents-tui" REQUIRED
-             shared-state.ts    ← reads globalThis symbol → TaskRegistry + PolicyStore
-             sidebar.ts         ← sidebar_content slot; getSidebarData()
-             keybinds.ts        ← Ctrl+B / Ctrl+F / ↓ via api.command.register
-             plan-review-dialog.ts ← (reserved; wired in v1.1)
+            tui-plugin/
+              index.ts           ← TUI entry point; id: "bg-subagents-tui" REQUIRED
+              shared-state.ts    ← reads globalThis symbol → TaskRegistry + PolicyStore
+              sidebar.ts         ← sidebar_content slot; getSidebarData()
+              keybinds.ts        ← Ctrl+B / Ctrl+F / ↓ via api.command.register
+              plan-review-dialog.ts ← reserved; not runtime-verified here
 ```
 
 ---
@@ -85,17 +85,25 @@ OpenCode session
 ## Data flow (server side)
 
 ```
-LLM generates tool call
+~/.config/bg-subagents/policy.jsonc
+      │
+      ▼
+loadPolicy() → normalizes legacy bg/fg to background/foreground
+      │
+      ▼
+PolicyResolver.resolveBatch(tasks[])
+      ▲
+      │
+LLM generates task tool calls
       │
       ▼
 messages-transform hook (experimental.chat.messages.transform)
       │
       ▼
-PolicyResolver.resolveBatch(tasks[])
+rewriteParts(decisions[])
       │
-      ├── mode = "background" → rewriteParts replaces task → task_bg in message parts
-      ├── mode = "foreground" → parts pass through unchanged
-      └── mode = "ask"        → (no picker in v1.0; falls back to policy default)
+      ├── mode = "background" → rewriteParts replaces task → task_bg
+      └── mode = "foreground" → parts pass through unchanged as native task
       │
       ▼
 Rewritten message parts forwarded to OpenCode host
@@ -110,6 +118,49 @@ TaskRegistry.onComplete(event)
       │              OR bus.emit("bg-subagents/task-complete") [legacy path]
       └─→ fallback: session.writeAssistantMessage(...)  [2000ms timer]
 ```
+
+### Verified SDD control flow
+
+```text
+policy.jsonc
+  default_mode_by_agent_name:
+    sdd-explore = bg/background
+    sdd-apply   = fg/foreground
+    sdd-verify  = fg/foreground
+        │
+        ▼
+loadPolicy() normalizes modes
+        │
+        ▼
+messages.transform
+        │
+        ├─ sdd-explore → task_bg
+        ├─ sdd-apply   → task
+        └─ sdd-verify  → task
+
+/task policy bg|fg|default
+        │
+        ▼
+chat.message hook updates TaskPolicyStore for the session
+        │
+        ▼
+messages.transform applies the session override before per-agent policy
+
+control-tui session.created
+        │
+        ▼
+auto-flip helper checks bg policy and parent session
+        │
+        ├─ mark parent before respawn to prevent loops
+        └─ promptAsync detaches the replacement background task
+```
+
+| Mode | Runtime path | UX contract |
+|------|--------------|-------------|
+| `background` | `messages.transform` rewrites `task` to `task_bg`, or control-tui auto-flip detaches a native task. | Does not block the interactive interface. |
+| `foreground` | Native OpenCode `task`. | Blocks by design while the delegated task owns the turn. |
+
+The verified config source is `~/.config/bg-subagents/policy.jsonc`, especially `default_mode_by_agent_name`. Canonical values are `background` and `foreground`; legacy shorthand values `bg` and `fg` are accepted and normalized on load. Historical `bgSubagents.policy` references describe an older flat config shape and should not be treated as the current happy path unless a specific compatibility path is being tested.
 
 ## UI flow (TUI side)
 
@@ -163,7 +214,7 @@ Returns data object to TUI host for rendering
 | `tui-plugin/shared-state.ts` | Singleton bridge via `Symbol.for("@maicolextic/bg-subagents/shared")` on `globalThis`. Server writes; TUI reads. |
 | `tui-plugin/sidebar.ts` | `sidebar_content` slot plugin. `getSidebarData()` maps TaskRegistry to sorted `SidebarTaskRow[]`. |
 | `tui-plugin/keybinds.ts` | Three TuiCommand entries: Ctrl+B (BG tasks), Ctrl+F (FG tasks), ↓ (all tasks). Dialogs via `api.ui.dialog.replace`. |
-| `tui-plugin/plan-review-dialog.ts` | Reserved for v1.1 — plan-review trigger wiring (not wired in v1.0). |
+| `tui-plugin/plan-review-dialog.ts` | Reserved/deferred — do not document as a verified runtime picker. |
 
 ---
 

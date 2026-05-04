@@ -12,7 +12,7 @@ metadata:
 
 # bg-subagents
 
-Background vs foreground subagent execution — PolicyResolver drives the default per agent, with TUI integration for interactive plan review.
+Background vs foreground subagent execution — PolicyResolver drives the default per agent from `policy.jsonc`, with optional TUI visibility.
 
 ## OpenCode
 
@@ -32,19 +32,23 @@ pnpm add @maicolextic/bg-subagents-opencode
 
 ```json
 {
-  "plugin": ["@maicolextic/bg-subagents-opencode"],
-  "bgSubagents": {
-    "policy": {
-      "sdd-explore":  "background",
-      "sdd-apply":    "foreground",
-      "sdd-verify":   "foreground",
-      "*":            "background"
-    }
+  "plugin": ["@maicolextic/bg-subagents-opencode"]
+}
+```
+
+**Step 3 — configure routing in `~/.config/bg-subagents/policy.jsonc`:**
+
+```jsonc
+{
+  "default_mode_by_agent_name": {
+    "sdd-explore": "background",
+    "sdd-apply": "foreground",
+    "sdd-verify": "foreground"
   }
 }
 ```
 
-**Step 3 (optional) — wire the TUI plugin into `~/.config/opencode/tui.json`** (requires OpenCode 1.14.23+):
+**Step 4 (optional) — wire the TUI plugin into `~/.config/opencode/tui.json`** (requires OpenCode 1.14.23+):
 
 ```json
 {
@@ -56,36 +60,35 @@ pnpm add @maicolextic/bg-subagents-opencode
 }
 ```
 
-The TUI plugin adds the task sidebar, Ctrl+B/Ctrl+F/↓ keybinds, and the interactive plan-review dialog. The server plugin works independently without it.
+The TUI plugin adds the task sidebar and Ctrl+B/Ctrl+F/↓ keybinds. Routing is already handled server-side; do not assume a runtime picker/dialog unless that path is separately verified.
 
 ### How it works
 
 When OpenCode runs a multi-agent turn (one or more `task` calls), the `experimental.chat.messages.transform` hook intercepts the message batch before it is sent to the LLM:
 
-1. **PolicyResolver** maps each agent name to a mode (`background` / `foreground`) using the `bgSubagents.policy` config, with `*` as wildcard fallback.
+1. **PolicyResolver** maps each agent name to a mode (`background` / `foreground`) using `~/.config/bg-subagents/policy.jsonc` and `default_mode_by_agent_name`.
 2. **Foreground** agents: call passes through unchanged — blocks the main conversation until complete.
 3. **Background** agents: call is rewritten to `task_bg`, which returns `{ task_id, status: "running" }` immediately — the main conversation continues unblocked.
-4. If the TUI plugin is loaded, the **plan-review dialog** (`api.ui.DialogSelect`) appears for multi-delegation turns, letting the user override the PolicyResolver decision per-task before the batch is sent.
-5. Completion is delivered via `client.session.message.create` (primary path), with a 2000 ms ack-timeout fallback via `client.session.prompt({ noReply: true })`.
+4. `/task policy bg|fg|default` is intercepted by `chat.message`, updates the session `TaskPolicyStore`, and affects later `messages.transform` routing.
+5. Completion is delivered via `client.session.message.create` (primary path), with a 2000 ms ack-timeout fallback.
 
 ### Configuration reference
 
-All config lives under the `bgSubagents` key in `~/.config/opencode/opencode.json`.
+Routing config lives in `~/.config/bg-subagents/policy.jsonc`.
 
-```json
+```jsonc
 {
-  "bgSubagents": {
-    "policy": {
-      "<agent_name>": "background" | "foreground",
-      "*":            "background" | "foreground"
-    }
+  "default_mode_by_agent_name": {
+    "<agent_name>": "background" | "foreground"
   }
 }
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `bgSubagents.policy` | `Record<string, "background" \| "foreground">` | `{ "*": "background" }` | Per-agent default mode. Agent name is matched exactly; `"*"` is the wildcard fallback. |
+| `default_mode_by_agent_name` | `Record<string, "background" \| "foreground">` | policy default | Per-agent default mode. Agent name is matched exactly. Legacy `bg`/`fg` values are accepted and normalized. |
+
+`bgSubagents.policy` is historical/compatibility wording, not the verified happy-path config source.
 
 ### `/task` command reference
 

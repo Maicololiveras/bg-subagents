@@ -20,19 +20,23 @@ pnpm add @maicolextic/bg-subagents-opencode
 
 ```json
 {
-  "plugin": ["@maicolextic/bg-subagents-opencode"],
-  "bgSubagents": {
-    "policy": {
-      "sdd-explore":  "background",
-      "sdd-apply":    "foreground",
-      "sdd-verify":   "foreground",
-      "*":            "background"
-    }
-  }
+  "plugin": ["@maicolextic/bg-subagents-opencode"]
 }
 ```
 
 > Important: use `"plugin"` (singular, array) — not `"plugins"`. OpenCode silently ignores the plural key.
+
+Routing policy is read from `~/.config/bg-subagents/policy.jsonc`:
+
+```jsonc
+{
+  "default_mode_by_agent_name": {
+    "sdd-explore": "background",
+    "sdd-apply": "foreground",
+    "sdd-verify": "foreground"
+  }
+}
+```
 
 **Step 3 (optional) — wire the TUI plugin** into `~/.config/opencode/tui.json` (requires OpenCode 1.14.23+):
 
@@ -46,7 +50,7 @@ pnpm add @maicolextic/bg-subagents-opencode
 }
 ```
 
-The TUI plugin adds the task sidebar, `Ctrl+B` / `Ctrl+F` / `↓` keybinds, and the interactive plan-review dialog. The server plugin works independently without it.
+The TUI plugin adds the task sidebar and `Ctrl+B` / `Ctrl+F` / `↓` keybinds. Routing works server-side without a verified runtime picker/dialog.
 
 **Step 4 — verify:**
 
