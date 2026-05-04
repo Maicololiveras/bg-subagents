@@ -35,11 +35,11 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 | PR | Estado | Base | Scope | Presupuesto |
 |----|--------|------|-------|-------------|
 | PR0 | En curso | `main` | Tracker y mapa de cadena. | Doc chico; aggregate diff puede exceder si hiciera falta. |
-| PR1 | Pendiente | PR0 | Reconciliar OpenSpec `tasks/spec/design` as-built y decidir source-of-truth. | <400 líneas. |
-| PR2 | Pendiente | PR0 | Alinear `messages.transform` con policy file real o deshabilitar seguro; garantizar `sdd-apply`/`sdd-verify` en FG. | <400 líneas. |
-| PR3 | Pendiente | PR0 | Cablear `/task policy/list/show/kill/move-bg` al runtime real o retirar docs si no existe runtime. | <400 líneas. |
-| PR4 | Pendiente | PR0 | Tests SDD: BG no bloquea, FG bloquea, auto-flip sin loop. | <400 líneas. |
-| PR5 | Pendiente | PR0 | Pulir README, arquitectura, skill docs y diagramas precisos. | <400 líneas. |
+| PR1 | Aprobado | PR0 | Reconciliar OpenSpec `tasks/spec/design` as-built y decidir source-of-truth. | <400 líneas. |
+| PR2 | Aprobado | PR0 | Alinear `messages.transform` con policy file real o deshabilitar seguro; garantizar `sdd-apply`/`sdd-verify` en FG. | <400 líneas. |
+| PR3 | Aprobado | PR0 | Cablear `/task policy/list/show/kill/move-bg` al runtime real o retirar docs si no existe runtime. | <400 líneas. |
+| PR4 | Aprobado | PR0 | Tests SDD: BG no bloquea, FG bloquea, auto-flip sin loop. | <400 líneas. |
+| PR5 | En revisión | PR4 | Pulir README, arquitectura, skill docs y diagramas precisos. | <400 líneas. |
 
 ## Hallazgos que guían la cadena
 
@@ -86,9 +86,10 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 
 ### PR5 - Docs/diagrams polish
 
-- [ ] Actualizar README y arquitectura con el flujo real.
-- [ ] Actualizar skill docs SDD si mencionan routing viejo.
-- [ ] Dejar diagramas precisos y sin promesas no implementadas.
+- [x] Actualizar README y arquitectura con el flujo real verificado.
+- [x] Actualizar skill docs SDD si mencionan routing viejo.
+- [x] Dejar diagramas precisos y sin promesas no implementadas.
+- [ ] Revisión final de la cadena antes de cerrar #19.
 
 ## Criterios de aceptación globales
 

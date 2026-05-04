@@ -47,16 +47,16 @@ OpenCode uses `"plugin"` (singular, array) as the key. Using `"plugins"` silentl
 
 v0.x showed an interactive picker prompt on every `task` call asking `background / foreground`. This is gone in v1.0.
 
-In v1.0, policy is resolved silently via `bgSubagents.policy` in `opencode.json`. The picker is replaced by:
+In v1.0, policy is resolved silently via `~/.config/bg-subagents/policy.jsonc`. The picker is replaced by:
 - **PolicyResolver** (silent, per-agent config)
 - **`/task policy bg|fg|default`** (session-scoped override)
-- **TUI plan-review dialog** (optional, per-turn interactive override via `tui.json`)
+- **TUI/sidebar controls** where separately verified; routing does not depend on a picker/dialog
 
 ### 4. Policy configuration location changed
 
-v0.x used `~/.config/bg-subagents/policy.jsonc` as a separate file.
+v0.x used `~/.config/bg-subagents/policy.jsonc` with legacy picker-oriented fields.
 
-v1.0 uses the `bgSubagents.policy` key directly in `opencode.json`. The separate `policy.jsonc` file is no longer read.
+The verified v1.0 routing source is still `~/.config/bg-subagents/policy.jsonc`, with `default_mode_by_agent_name`. Canonical modes are `background` and `foreground`; legacy `bg` and `fg` are accepted and normalized.
 
 **Before (v0.x):**
 ```jsonc
@@ -68,14 +68,12 @@ v1.0 uses the `bgSubagents.policy` key directly in `opencode.json`. The separate
 ```
 
 **After (v1.0):**
-```json
-// ~/.config/opencode/opencode.json
+```jsonc
+// ~/.config/bg-subagents/policy.jsonc
 {
-  "bgSubagents": {
-    "policy": {
-      "researcher": "background",
-      "*":          "foreground"
-    }
+  "default_mode_by_agent_name": {
+    "researcher": "background",
+    "reviewer": "foreground"
   }
 }
 ```
@@ -108,34 +106,31 @@ pnpm add @maicolextic/bg-subagents-opencode@^1.0.0
 
 ### 2. Update `opencode.json`
 
-Replace your old plugin config:
+Use minimal plugin config:
 
 ```json
 {
-  "plugin": ["@maicolextic/bg-subagents-opencode"],
-  "bgSubagents": {
-    "policy": {
-      "sdd-explore":  "background",
-      "sdd-apply":    "foreground",
-      "*":            "background"
-    }
+  "plugin": ["@maicolextic/bg-subagents-opencode"]
+}
+```
+
+Adjust routing in `~/.config/bg-subagents/policy.jsonc` to match your agent names.
+
+### 3. Update the policy file
+
+```jsonc
+{
+  "default_mode_by_agent_name": {
+    "sdd-explore": "background",
+    "sdd-apply": "foreground",
+    "sdd-verify": "foreground"
   }
 }
 ```
 
-Adjust the policy keys to match your agent names. The `"*"` wildcard is the fallback for any agent not explicitly listed.
-
-### 3. Remove the old policy file (optional)
-
-```bash
-rm ~/.config/bg-subagents/policy.jsonc
-```
-
-The old file is ignored by v1.0.
-
 ### 4. (Optional) Add TUI plugin
 
-If you want the sidebar, keybinds, and plan-review dialog, create `~/.config/opencode/tui.json`:
+If you want the sidebar and keybinds, create `~/.config/opencode/tui.json`:
 
 ```json
 {
@@ -165,12 +160,12 @@ If the command is recognized and returns output (even empty), the plugin loaded 
 
 See [packages/opencode/README.md](../packages/opencode/README.md) for the full reference. Highlights:
 
-- **PolicyResolver** — per-agent BG/FG defaults in `opencode.json`, no picker required
+- **PolicyResolver** — per-agent BG/FG defaults in `policy.jsonc`, no picker required
 - **`/task policy`** — session-scoped override (bg / fg / default)
 - **`/task move-bg <id>`** — move a running foreground task to background mid-execution
 - **TUI sidebar** — live task list via `tui.json` (optional)
 - **`Ctrl+B` / `Ctrl+F` / `↓`** — keyboard navigation for task management
-- **Plan-review dialog** — interactive per-task BG/FG override via TUI (optional)
+- **TUI controls** — sidebar/keybind visibility; do not assume dialog routing unless separately verified
 - **Zero stdout pollution** — no raw JSON or event dumps in the TUI, ever
 - **788 tests green** — full monorepo coverage across protocol + core + opencode packages
 
