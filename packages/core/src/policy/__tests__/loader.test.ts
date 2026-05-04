@@ -58,6 +58,29 @@ describe("loadPolicy", () => {
     expect(loaded.migrated).toBeUndefined();
   });
 
+  it("normalizes legacy bg/fg mode values from policy.jsonc", async () => {
+    const file = path.join(tmpDir, "policy.jsonc");
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        default_mode_by_agent_name: {
+          "sdd-explore": "bg",
+          "sdd-apply": "fg",
+        },
+      }),
+      "utf8",
+    );
+
+    const loaded = await loadPolicy(file);
+
+    expect(loaded.policy.default_mode_by_agent_name?.["sdd-explore"]).toBe(
+      "background",
+    );
+    expect(loaded.policy.default_mode_by_agent_name?.["sdd-apply"]).toBe(
+      "foreground",
+    );
+  });
+
   it("returns hardcoded default policy with source: 'default' when file does not exist", async () => {
     const missing = path.join(tmpDir, "does-not-exist.jsonc");
 

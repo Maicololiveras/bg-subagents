@@ -153,9 +153,12 @@ async function parseAndValidate(
   }
 
   // --- Schema validation -------------------------------------------------
+  // control-tui wrote short modes (bg/fg) before the protocol schema settled
+  // on background/foreground. Keep the disk format tolerant at the boundary.
+  const normalized = normalizeLegacyModes(parsed);
   let policy: Policy;
   try {
-    policy = PolicySchema.parse(parsed) as Policy;
+    policy = PolicySchema.parse(normalized) as Policy;
   } catch (err) {
     if (err instanceof ZodError) {
       const first = err.issues[0];
@@ -183,6 +186,30 @@ async function parseAndValidate(
 // -----------------------------------------------------------------------------
 // Internals
 // -----------------------------------------------------------------------------
+
+function normalizeLegacyModes(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+
+  const source = raw as Record<string, unknown>;
+  return {
+    ...source,
+    default_mode_by_agent_type: normalizeModeMap(source["default_mode_by_agent_type"]),
+    ...(source["default_mode_by_agent_name"] !== undefined
+      ? { default_mode_by_agent_name: normalizeModeMap(source["default_mode_by_agent_name"]) }
+      : {}),
+  };
+}
+
+function normalizeModeMap(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).map(([key, value]) => [
+      key,
+      value === "bg" ? "background" : value === "fg" ? "foreground" : value,
+    ]),
+  );
+}
 
 function isFatalJsoncError(err: ParseError): boolean {
   // With disallowComments: false + allowTrailingComma: true, the only
