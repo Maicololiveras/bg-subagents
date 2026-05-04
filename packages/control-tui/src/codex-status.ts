@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -22,6 +21,26 @@ export interface CodexStatusLogger {
 }
 
 export type CodexStatusExecutor = (() => Promise<string>) & { cancel?: () => void };
+
+interface CodexStatusPty {
+  onData: (callback: (data: string) => void) => { dispose: () => void };
+  onExit: (callback: (event: { exitCode: number }) => void) => { dispose: () => void };
+  kill: () => void;
+}
+
+type CodexStatusPtySpawn = (
+  file: string,
+  args: string[],
+  options: {
+    name: string;
+    cols: number;
+    rows: number;
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+  },
+) => CodexStatusPty;
+
+export type CodexStatusPtyFactory = () => Promise<CodexStatusPtySpawn> | CodexStatusPtySpawn;
 
 export interface CodexStatusPollState {
   inFlight: boolean;
@@ -53,14 +72,36 @@ function percentMatch(raw: string, pattern: RegExp): string | undefined {
   return value ? `${value}%` : undefined;
 }
 
+export function stripAnsiForCodexStatus(text: string): string {
+  return text
+    .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, "")
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1B[()][A-Za-z0-9]/g, "")
+    .replace(/\r/g, "\n")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+function hasCompleteCodexStatus(stdout: string): boolean {
+  const clean = stripAnsiForCodexStatus(stdout);
+  return Boolean(
+    firstMatch(clean, /Model:\s+(.*)/) &&
+      firstMatch(clean, /Account:\s+([^\s]+)/) &&
+      firstMatch(clean, /Session:\s+([^\s]+)/) &&
+      percentMatch(clean, /Context window:\s+(\d+)%/) &&
+      percentMatch(clean, /5h limit:.*?\s+(\d+)%/) &&
+      percentMatch(clean, /Weekly limit:.*?\s+(\d+)%/),
+  );
+}
+
 export function parseCodexStatus(stdout: string, now = new Date()): CodexStatusSnapshot {
-  const model = firstMatch(stdout, /Model:\s+(.*)/);
-  const account = firstMatch(stdout, /Account:\s+([^\s]+)/);
-  const session = firstMatch(stdout, /Session:\s+([^\s]+)/);
+  const clean = stripAnsiForCodexStatus(stdout);
+  const model = firstMatch(clean, /Model:\s+(.*)/);
+  const account = firstMatch(clean, /Account:\s+([^\s]+)/);
+  const session = firstMatch(clean, /Session:\s+([^\s]+)/);
   const usage: CodexStatusSnapshot["usage"] = {};
-  const contextAvailable = percentMatch(stdout, /Context window:\s+(\d+)%/);
-  const limit5h = percentMatch(stdout, /5h limit:.*?\s+(\d+)%/);
-  const weeklyLimit = percentMatch(stdout, /Weekly limit:.*?\s+(\d+)%/);
+  const contextAvailable = percentMatch(clean, /Context window:\s+(\d+)%/);
+  const limit5h = percentMatch(clean, /5h limit:.*?\s+(\d+)%/);
+  const weeklyLimit = percentMatch(clean, /Weekly limit:.*?\s+(\d+)%/);
   if (contextAvailable) usage.contextAvailable = contextAvailable;
   if (limit5h) usage.limit5h = limit5h;
   if (weeklyLimit) usage.weeklyLimit = weeklyLimit;
@@ -68,7 +109,7 @@ export function parseCodexStatus(stdout: string, now = new Date()): CodexStatusS
   const snapshot: CodexStatusSnapshot = {
     timestamp: now.toISOString(),
     usage,
-    raw: stdout,
+    raw: clean,
   };
   if (model) snapshot.model = model;
   if (account) snapshot.account = account;
@@ -102,51 +143,90 @@ export function writeCodexStatusSnapshot(
   renameSync(tmpPath, outputPath);
 }
 
-export function createCodexStatusExecutor(timeoutMs = 4000): CodexStatusExecutor {
-  let currentChild: ReturnType<typeof spawn> | undefined;
+async function loadNodePtySpawn(): Promise<CodexStatusPtySpawn> {
+  try {
+    const nodePty = await import("node-pty");
+    return nodePty.spawn as CodexStatusPtySpawn;
+  } catch (err) {
+    throw new Error("codex /status unavailable: node-pty could not be loaded", { cause: err });
+  }
+}
+
+export function createCodexStatusExecutor(
+  timeoutMs = 4000,
+  ptyFactory: CodexStatusPtyFactory = loadNodePtySpawn,
+): CodexStatusExecutor {
+  let currentPty: CodexStatusPty | undefined;
+  let currentCancel: (() => void) | undefined;
   const executor: CodexStatusExecutor = () =>
     new Promise((resolve, reject) => {
-      const child = spawn("codex", ["/status"], { shell: false });
-      currentChild = child;
-      let stdout = "";
-      let stderr = "";
+      let pty: CodexStatusPty | undefined;
+      let output = "";
       let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let dataSubscription: { dispose: () => void } | undefined;
+      let exitSubscription: { dispose: () => void } | undefined;
+      let cancel: (() => void) | undefined;
 
-      const timeout = setTimeout(() => {
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout);
+        dataSubscription?.dispose();
+        exitSubscription?.dispose();
+        if (currentPty === pty) currentPty = undefined;
+        if (currentCancel === cancel) currentCancel = undefined;
+      };
+
+      const settle = (result: "resolve" | "reject", value: string | Error, kill = false) => {
         if (settled) return;
         settled = true;
-        child.kill();
-        reject(new Error("codex /status timed out"));
+        cleanup();
+        if (kill) pty?.kill();
+        if (result === "resolve") resolve(value as string);
+        else reject(value);
+      };
+
+      timeout = setTimeout(() => {
+        settle("reject", new Error("codex /status timed out"), true);
       }, timeoutMs);
 
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
-        stdout += chunk;
-      });
-      child.stderr.on("data", (chunk: string) => {
-        stderr += chunk;
-      });
-      child.on("error", (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        currentChild = undefined;
-        reject(err);
-      });
-      child.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        currentChild = undefined;
-        if (code === 0) {
-          resolve(stdout);
-        } else {
-          reject(new Error(`codex /status exited with code ${code}: ${stderr.trim()}`));
+      cancel = () => {
+        if (pty) pty.kill();
+        else settle("reject", new Error("codex /status cancelled"));
+      };
+      currentCancel = cancel;
+
+      void (async () => {
+        try {
+          const spawnPty = await ptyFactory();
+          if (settled) return;
+          try {
+            pty = spawnPty("codex", ["/status"], {
+              name: process.platform === "win32" ? "xterm-256color" : "xterm-color",
+              cols: 100,
+              rows: 30,
+              cwd: process.cwd(),
+              env: process.env,
+            });
+          } catch (err) {
+            throw new Error("codex /status unavailable: PTY could not be started", { cause: err });
+          }
+          currentPty = pty;
+          dataSubscription = pty.onData((chunk) => {
+            output += chunk;
+            if (hasCompleteCodexStatus(output)) {
+              settle("resolve", stripAnsiForCodexStatus(output), true);
+            }
+          });
+          exitSubscription = pty.onExit(({ exitCode }) => {
+            if (exitCode === 0) settle("resolve", stripAnsiForCodexStatus(output));
+            else settle("reject", new Error(`codex /status exited with code ${exitCode}`));
+          });
+        } catch (err) {
+          settle("reject", err instanceof Error ? err : new Error(String(err)));
         }
-      });
+      })();
     });
-  executor.cancel = () => currentChild?.kill();
+  executor.cancel = () => currentCancel?.();
   return executor;
 }
 
