@@ -29,7 +29,10 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
   |-- PR2 runtime policy alignment
   |-- PR3 runtime command/control wiring
   |-- PR4 SDD regression tests
-  `-- PR5 docs/diagrams polish
+  |-- PR5 docs/diagrams polish
+  |-- PR6 Codex status panel
+  |-- PR7 Codex status PTY executor
+  `-- PR8 Codex status provider abstraction
 ```
 
 | PR | Estado | Base | Scope | Presupuesto |
@@ -41,6 +44,8 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 | PR4 | Aprobado | PR0 | Tests SDD: BG no bloquea, FG bloquea, auto-flip sin loop. | <400 líneas. |
 | PR5 | En revisión | PR4 | Pulir README, arquitectura, skill docs y diagramas precisos. | <400 líneas. |
 | PR6 | En revisión | PR5 | Mostrar estado Codex en el panel sin bloquear la interfaz. | <400 líneas. |
+| PR7 | Base local | PR6 | Ejecutar `codex /status` vía PTY para capturar salida TUI. | <400 líneas. |
+| PR8 | En curso | PR7 | Abstraer provider/snapshot para preparar web analytics sin scraping todavía. | <400 líneas. |
 
 ## Hallazgos que guían la cadena
 
@@ -98,6 +103,18 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 - [x] Parsear modelo, cuenta, sesión y límites; persistir snapshot local `codex_status.json`.
 - [x] Mostrar un bloque compacto en el panel sin ejecutar comandos desde el render.
 
+### PR7 - Codex status PTY executor
+
+- [x] Cambiar executor CLI a `node-pty` para capturar salida TUI.
+- [x] Mantener timeout y no-overlap del monitor.
+- [ ] Usar sólo como fallback/opt-in: smoke real Windows mostró flujo interactivo/MCP inestable.
+
+### PR8 - Codex status provider abstraction
+
+- [x] Introducir `CodexStatusProvider` y snapshot extensible para fuentes futuras.
+- [x] Mantener CLI/PTY como provider `codex-cli`.
+- [x] Preparar formato compacto para 5h/week/credits/stale sin Playwright ni scraping.
+
 ## Criterios de aceptación globales
 
 - [ ] `background => no bloquea interfaz` está implementado, testeado y documentado.
@@ -119,6 +136,8 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 | PR4 | Regresiones SDD para BG no bloqueante, FG bloqueante y auto-flip anti-loop. |
 | PR5 | Docs y diagramas coinciden con el runtime validado en PR2-PR4. |
 | PR6 | Tests focalizados de parser, formato compacto y no-overlap del monitor Codex. |
+| PR7 | Tests focalizados de executor PTY y manejo de setup fallido. |
+| PR8 | Tests focalizados de provider, stale snapshot, formato web y no-overlap. |
 
 ## Notas de revisión
 
