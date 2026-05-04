@@ -1,5 +1,7 @@
 # live-control Specification
 
+> **Nota de reconciliación as-built (2026-05-04):** live-control todavía describe objetivos históricos de TUI/keybind. El comportamiento determinístico observado para no bloquear es el auto-flip de `control-tui/session.created`; el wiring de comandos `/task` no queda aceptado por este PR hasta que PR3 lo verifique en runtime. Tratá los requisitos de keybind/sidebar como deuda documental diferida salvo que PR3/PR4 aporten evidencia.
+
 ## Purpose
 
 While a foreground subagent task is executing and blocking the main conversation, the user can intervene via keyboard shortcut or slash command to move it to background. Implemented as an OpenCode 1.14+ TUI plugin module; not available on legacy hosts.

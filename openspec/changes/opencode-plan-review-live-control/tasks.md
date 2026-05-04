@@ -1,5 +1,24 @@
 # Tasks: OpenCode Plan Review + Live Control (v1.0)
 
+## As-built reconciliation status (2026-05-04)
+
+Este change folder se está reconciliando por issue #19 mediante una cadena de child PRs. Hasta que esa cadena termine, este archivo combina historial con notas as-built; no trates cada fase histórica pendiente como la próxima cola ejecutable de `/sdd-apply`.
+
+**Source of truth provisional:** comportamiento runtime y config observados en el árbol actual. La superficie real de routing mezcla `messages.transform`, `tool.execute.before` y auto-flip en `control-tui/session.created`. El patrón vivo determinístico observado para no bloquear la interfaz es `control-tui/session.created` auto-flip (`packages/control-tui/src/tui.tsx`, `packages/control-tui/src/events.ts`, `packages/control-tui/src/actions.ts`). La config activa vive en `~/.config/bg-subagents/policy.jsonc` con `default_mode_by_agent_name` y valores `bg|fg`, no en el shape viejo `bgSubagents.policy` con `background|foreground`.
+
+**Regla UX global:** `background` significa que la tarea no debe bloquear la interfaz; `foreground` puede bloquear por diseño.
+
+| Área | Estado reconciliado | Follow-up |
+|---|---|---|
+| Plan Review picker / batch threshold | Superseded para el as-built actual. No implementar picker ni `batch >= 2` desde las tareas viejas como verdad de v1. | PR5 puede reescribir diagramas/docs después de validar runtime. |
+| Routing por `messages.transform` | Existe en código, pero este PR no lo acepta como garantía final SDD FG/BG porque un fallback de policy viejo puede enrutar mal agentes SDD. | PR2 debe alinearlo con la policy real o desactivar de forma segura el rewrite inseguro. |
+| `tool.execute.before` | Presente como parte de la superficie mixta de routing. | PR2 decide si queda como fallback, path legacy o registro histórico. |
+| Auto-flip `control-tui/session.created` | Patrón as-built determinístico observado para `background => no bloquea interfaz`. | PR4 debe cubrir no bloqueo y regresión anti-loop. |
+| Comandos `/task` | Pueden existir en código, pero el wiring runtime no queda verificado por este PR. | PR3 valida wiring o elimina docs no soportadas. |
+| Promesas TUI picker/sidebar | Parcialmente históricas/diferidas; no tratarlas como cierre requerido de v1. | PR5 pule docs/diagramas después de PR2-PR4. |
+
+**Resto de la cadena:** PR2 alinea policy runtime y protege que `sdd-apply`/`sdd-verify` queden en foreground; PR3 valida wiring de comandos `/task`; PR4 agrega regresiones SDD para BG/FG y auto-flip; PR5 limpia docs y diagramas grandes. Este PR cambia intencionalmente solo OpenSpec/docs.
+
 Strict TDD mode is active (per `openspec/config.yaml`): for every implementation task, a RED task writing a failing test MUST precede the GREEN implementation task. Test command: `pnpm -r run test`.
 
 Each task lists the **exact files** it touches and the **acceptance criteria** mapped to specs.
