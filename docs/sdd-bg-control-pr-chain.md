@@ -40,6 +40,7 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 | PR3 | Aprobado | PR0 | Cablear `/task policy/list/show/kill/move-bg` al runtime real o retirar docs si no existe runtime. | <400 líneas. |
 | PR4 | Aprobado | PR0 | Tests SDD: BG no bloquea, FG bloquea, auto-flip sin loop. | <400 líneas. |
 | PR5 | En revisión | PR4 | Pulir README, arquitectura, skill docs y diagramas precisos. | <400 líneas. |
+| PR6 | En revisión | PR5 | Mostrar estado Codex en el panel sin bloquear la interfaz. | <400 líneas. |
 
 ## Hallazgos que guían la cadena
 
@@ -91,6 +92,12 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 - [x] Dejar diagramas precisos y sin promesas no implementadas.
 - [ ] Revisión final de la cadena antes de cerrar #19.
 
+### PR6 - Codex status panel
+
+- [x] Ejecutar `codex /status` en background con `spawn`, timeout y sin overlap.
+- [x] Parsear modelo, cuenta, sesión y límites; persistir snapshot local `codex_status.json`.
+- [x] Mostrar un bloque compacto en el panel sin ejecutar comandos desde el render.
+
 ## Criterios de aceptación globales
 
 - [ ] `background => no bloquea interfaz` está implementado, testeado y documentado.
@@ -111,6 +118,7 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 | PR3 | Prueba de wiring real por comando o eliminación explícita de docs no implementadas. |
 | PR4 | Regresiones SDD para BG no bloqueante, FG bloqueante y auto-flip anti-loop. |
 | PR5 | Docs y diagramas coinciden con el runtime validado en PR2-PR4. |
+| PR6 | Tests focalizados de parser, formato compacto y no-overlap del monitor Codex. |
 
 ## Notas de revisión
 
