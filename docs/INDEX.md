@@ -28,6 +28,7 @@ Navigation aid for all documentation in this repository. One-line description pe
 |-----|---------------|
 | [architecture.md](architecture.md) | Component diagram, hook wiring table, data flow, SharedPluginState bridge |
 | [policy-schema.md](policy-schema.md) | Full policy JSONC field reference with types, defaults, and descriptions |
+| [sdd-bg-control-pr-chain.md](sdd-bg-control-pr-chain.md) | Tracker for the SDD BG/FG reconciliation feature-branch PR chain |
 | [release-process.md](release-process.md) | Changesets workflow, publish procedure, versioning conventions |
 | [opencode-notes.md](opencode-notes.md) | Working notes on OpenCode internals and hook surface |
 | [opencode-1.14-verification.md](opencode-1.14-verification.md) | Verification log for OpenCode 1.14.x compatibility |
