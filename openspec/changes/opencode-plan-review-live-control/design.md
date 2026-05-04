@@ -1,5 +1,7 @@
 # Design: OpenCode Plan Review + Live Control (v1.0)
 
+> **Nota de reconciliación as-built (2026-05-04, issue #19):** este design contiene pivots históricos y no debe usarse como único source of truth hasta completar la cadena de PRs. Hasta que PR2 decida la superficie canónica de routing, `experimental.chat.messages.transform` NO debe tratarse como garantía final para routing SDD FG/BG: existe, pero un fallback de policy viejo puede enviar agentes al modo equivocado. El patrón runtime determinístico observado para `background => no bloquea interfaz` es el auto-flip de `control-tui/session.created`; PR2 debe canonizar/alinear ese comportamiento con `messages.transform` o dejar inerte el path inseguro.
+
 ## Technical Approach
 
 > **Plan D pivot (2026-04-24, post-spike TQ-1 runtime)**: v1.0 is **server-side only**. The TUI plugin (`./tui` subpath, `Ctrl+B` keybind, sidebar) is **deferred to v1.1**. See ADR-8 for the full decision. The sections below reflect the post-pivot architecture.

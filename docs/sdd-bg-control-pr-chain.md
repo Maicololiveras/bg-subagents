@@ -35,7 +35,7 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 | PR | Estado | Base | Scope | Presupuesto |
 |----|--------|------|-------|-------------|
 | PR0 | En curso | `main` | Tracker y mapa de cadena. | Doc chico; aggregate diff puede exceder si hiciera falta. |
-| PR1 | Pendiente | PR0 | Reconciliar OpenSpec `tasks/spec/design` as-built y decidir source-of-truth. | <400 líneas. |
+| PR1 | En revisión | PR0 | Reconciliar OpenSpec `tasks/spec/design` as-built y decidir source-of-truth provisional. | <400 líneas. |
 | PR2 | Pendiente | PR0 | Alinear `messages.transform` con policy file real o deshabilitar seguro; garantizar `sdd-apply`/`sdd-verify` en FG. | <400 líneas. |
 | PR3 | Pendiente | PR0 | Cablear `/task policy/list/show/kill/move-bg` al runtime real o retirar docs si no existe runtime. | <400 líneas. |
 | PR4 | Pendiente | PR0 | Tests SDD: BG no bloquea, FG bloquea, auto-flip sin loop. | <400 líneas. |
@@ -65,6 +65,7 @@ PR0 tracker: feat/sdd-bg-control-reconciliation
 - [ ] Actualizar OpenSpec `tasks.md`, specs y design al estado as-built.
 - [ ] Decidir y documentar el source-of-truth para policy y routing.
 - [ ] Separar deuda histórica de trabajo necesario para cerrar #19.
+- [x] Agregar notas plan-only para evitar que `/sdd-continue`, `/sdd-apply` o `/sdd-verify` sigan fases históricas obsoletas antes de PR2-PR4.
 
 ### PR2 - Runtime policy alignment
 

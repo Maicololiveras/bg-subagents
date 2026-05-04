@@ -1,5 +1,7 @@
 # plan-review Specification
 
+> **Superseded por reconciliación as-built (2026-05-04):** los requisitos picker-first y `batch >= 2` de abajo son históricos, no criterios de aceptación vigentes para issue #19. La regla provisional actual es routing por policy sobre todos los `task` relevantes, con `background => no bloquea interfaz` y `foreground => puede bloquear por diseño`. PR2 debe verificar o corregir el source of truth runtime antes de reescribir estos escenarios.
+
 ## Purpose
 
 Before the host executes a batch of subagent `task` delegations proposed by the LLM in a single turn, the user sees a consolidated picker listing every planned delegation and chooses BG/FG/Skip for each in a single confirmation. Replaces the per-call picker from v0.1.x on OpenCode 1.14+ hosts.
