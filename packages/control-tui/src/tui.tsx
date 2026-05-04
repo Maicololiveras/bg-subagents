@@ -41,6 +41,11 @@ import {
   markAutoFlipParent,
   shouldAutoFlipTask,
 } from "./auto-flip.js";
+import {
+  createCodexStatusMonitor,
+  formatCodexStatusLines,
+  type CodexStatusSnapshot,
+} from "./codex-status.js";
 
 const PLUGIN_ID = "bg-subagents-control-tui";
 const SIDEBAR_ORDER = 80;
@@ -77,8 +82,9 @@ const STATUS_ICON: Record<ActiveTask["status"], string> = {
 interface WidgetProps {
   policies: () => Record<string, Mode>;
   activeTasks: () => readonly ActiveTask[];
+  codexStatus: () => CodexStatusSnapshot | undefined;
   onTaskRightClick: (task: ActiveTask) => void;
-  sessionID?: string;
+  sessionID?: string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   api: any;
 }
@@ -216,6 +222,12 @@ function SidebarWidget(props: WidgetProps) {
         </Show>
       </Show>
 
+      {/* Codex status — rendered from monitor snapshot only; never shells from UI render. */}
+      <text dim>── codex ──</text>
+      <For each={formatCodexStatusLines(props.codexStatus())}>
+        {(line) => <text>{line}</text>}
+      </For>
+
       <text dim>↑ ctrl+p → "bg-control"</text>
     </box>
   );
@@ -247,6 +259,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
     }
   }
   const [policies, setPolicies] = createSignal(initial);
+  const [codexStatus, setCodexStatus] = createSignal<CodexStatusSnapshot>();
 
   try {
     writePolicyFile(initial);
@@ -268,6 +281,12 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
     error: (msg: string, fields?: Record<string, unknown>) =>
       logger.error(msg, fields),
   };
+
+  const codexStatusMonitor = createCodexStatusMonitor({
+    onSnapshot: setCodexStatus,
+    logger: actionLogger,
+  });
+  codexStatusMonitor.start();
 
   // Anti-loop tracking: parents whose tasks we recently auto-flipped.
   // Without this, the new BG child we create also fires session.created → would
@@ -580,6 +599,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
           <SidebarWidget
             policies={policies}
             activeTasks={registry.tasks}
+            codexStatus={codexStatus}
             onTaskRightClick={openTaskMenu}
             sessionID={slotProps?.session_id}
             api={api}
@@ -755,6 +775,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
   // 6. Lifecycle cleanup
   // ---------------------------------------------------------------------------
   api.lifecycle.onDispose(() => {
+    codexStatusMonitor.stop();
     disposeEvents();
     commandDispose?.();
     logger.info("control-tui v0.6 disposed");
