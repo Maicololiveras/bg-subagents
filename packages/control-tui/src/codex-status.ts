@@ -2,6 +2,8 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { createCodexAnalyticsWebProvider } from "./codex-analytics-web.js";
+
 export interface CodexStatusSnapshot {
   timestamp: string;
   source?: "codex-cli" | "chatgpt-web-analytics" | "manual";
@@ -67,6 +69,8 @@ export interface CodexStatusMonitorOptions {
   provider?: CodexStatusProvider;
   executor?: CodexStatusExecutor;
 }
+
+export const CODEX_ANALYTICS_RECOMMENDED_INTERVAL_MS = 15 * 60 * 1000;
 
 export const CODEX_STATUS_PATH = join(
   homedir(),
@@ -143,6 +147,20 @@ export function createCliCodexStatusProvider(
   };
   if (executor.cancel) provider.cancel = executor.cancel;
   return provider;
+}
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export function createCodexStatusProviderFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  executor?: CodexStatusExecutor,
+): CodexStatusProvider {
+  if (env.BG_SUBAGENTS_CODEX_STATUS_SOURCE === "web") return createCodexAnalyticsWebProvider();
+  return createCliCodexStatusProvider(executor);
 }
 
 export function formatCodexStatusLines(snapshot?: CodexStatusSnapshot): string[] {
@@ -313,13 +331,18 @@ export async function runCodexStatusPoll(options: {
 }
 
 export function createCodexStatusMonitor(options: CodexStatusMonitorOptions = {}) {
-  const intervalMs = options.intervalMs ?? 5000;
-  const state: CodexStatusPollState = { inFlight: false };
+  const envIntervalMs = parsePositiveInteger(process.env.BG_SUBAGENTS_CODEX_ANALYTICS_INTERVAL_MS);
   const provider =
     options.provider ??
-    createCliCodexStatusProvider(
+    createCodexStatusProviderFromEnv(
+      process.env,
       options.executor ?? createCodexStatusExecutor(options.timeoutMs ?? 4000),
     );
+  const intervalMs =
+    options.intervalMs ??
+    (provider.name === "chatgpt-web-analytics" ? envIntervalMs : undefined) ??
+    (provider.name === "chatgpt-web-analytics" ? CODEX_ANALYTICS_RECOMMENDED_INTERVAL_MS : 5000);
+  const state: CodexStatusPollState = { inFlight: false };
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = true;
 

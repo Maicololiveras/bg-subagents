@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCliCodexStatusProvider,
   createCodexStatusExecutor,
+  createCodexStatusProviderFromEnv,
   formatCodexStatusLines,
   parseCodexStatus,
   runCodexStatusPoll,
@@ -257,5 +258,12 @@ describe("codex status", () => {
 
     expect(snapshot.source).toBe("codex-cli");
     expect(snapshot.usage.limit5h).toBe("51%");
+  });
+
+  it("chooses the web provider from env", () => {
+    expect(
+      createCodexStatusProviderFromEnv({ BG_SUBAGENTS_CODEX_STATUS_SOURCE: "web" }).name,
+    ).toBe("chatgpt-web-analytics");
+    expect(createCodexStatusProviderFromEnv({}, async () => SAMPLE).name).toBe("codex-cli");
   });
 });
