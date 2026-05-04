@@ -156,7 +156,7 @@ Returns data object to TUI host for rendering
 | `host-compat/v14/event-handler.ts` | Read-only event consumer; logs session lifecycle events (session.idle, session.created, etc). |
 | `host-compat/v14/delivery.ts` | Coordinates primary (`client.session.message.create`) + fallback delivery with deduplication. |
 | `host-compat/v14/messages-transform.ts` | Intercepts LLM message parts, calls `PolicyResolver.resolveBatch`, rewrites task → task_bg. |
-| `host-compat/v14/slash-commands.ts` | Implements `/task list`, `/task show`, `/task kill`, `/task logs`, `/task move-bg`, `/task policy` via `api.command` interception. Exports `TaskPolicyStore`. |
+| `host-compat/v14/slash-commands.ts` | Implements `/task list`, `/task show`, `/task kill`, `/task logs`, `/task move-bg`, `/task policy` via the server `chat.message` hook. Exports `TaskPolicyStore`. |
 | `host-compat/v14/index.ts` | `buildV14Hooks(ctx)` — assembles all v14 hooks and initializes SharedPluginState. |
 | `host-compat/legacy/` | Mirror of v14 using the pre-1.14 OpenCode API surface. Per-call picker intercept instead of batch PolicyResolver. |
 | `tui-plugin/index.ts` | TUI entry point. `id: "bg-subagents-tui"` REQUIRED. Wires sidebar, keybinds, lifecycle. |
@@ -179,7 +179,7 @@ Returns data object to TUI host for rendering
 | `event` | `v14/event-handler.ts` | Logs session lifecycle events (read-only). |
 | delivery (primary) | `v14/delivery.ts` | `client.session.message.create` on task completion. |
 | delivery (fallback) | `v14/delivery.ts` | 2000ms timer writes synthetic assistant message if primary fails. |
-| `api.command` | `v14/slash-commands.ts` | Intercepts `/task *` and `/task policy *` slash commands. |
+| `chat.message` | `v14/slash-commands.ts` | Intercepts `/task *` and `/task policy *` slash commands. |
 
 ### Legacy hooks (OpenCode <1.14)
 

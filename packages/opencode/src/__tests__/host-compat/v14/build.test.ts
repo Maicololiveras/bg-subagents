@@ -314,6 +314,93 @@ describe("buildV14Hooks — Plan Review hook wired (Phase 9.2)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// PR3 — runtime /task command wiring via chat.message
+// ---------------------------------------------------------------------------
+
+describe("buildV14Hooks — /task runtime command wiring", () => {
+  it("returns a chat.message hook", async () => {
+    const input = makeV14Input();
+    const hooks = await buildV14Hooks(input as never);
+
+    expect(typeof hooks["chat.message"]).toBe("function");
+  });
+
+  it("/task policy bg mutates the same policyStore used by messages.transform", async () => {
+    const input = makeV14Input();
+    const hooks = await buildV14Hooks(input as never);
+
+    await hooks["chat.message"]!({
+      type: "chat.message",
+      sessionID: "sess_task_policy_hook",
+      message: {
+        role: "user",
+        parts: [{ type: "text", text: "/task policy bg" }],
+      },
+    });
+
+    const output = {
+      messages: [
+        {
+          parts: [
+            {
+              type: "tool-invocation",
+              toolInvocationId: "call_policy_hook",
+              toolName: "task",
+              args: { subagent_type: "sdd-apply", prompt: "apply" },
+            },
+          ],
+        },
+      ],
+    };
+
+    await hooks["experimental.chat.messages.transform"]!(
+      { sessionID: "sess_task_policy_hook", model: {} },
+      output as never,
+    );
+
+    expect(toolParts(output)[0]?.toolName).toBe("task_bg");
+  });
+
+  it("/task list replies through client.session.prompt with noReply markdown", async () => {
+    const input = makeV14Input();
+    const hooks = await buildV14Hooks(input as never);
+
+    await hooks["chat.message"]!({
+      type: "chat.message",
+      sessionID: "sess_task_list_hook",
+      message: { role: "user", text: "/task list" },
+    });
+
+    expect(input.promptSpy).toHaveBeenCalledTimes(1);
+    expect(input.promptSpy).toHaveBeenCalledWith({
+      path: { id: "sess_task_list_hook" },
+      body: {
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: expect.stringContaining("**[bg-subagents]**"),
+          },
+        ],
+      },
+    });
+  });
+
+  it("non-/task user messages do not call client.session.prompt", async () => {
+    const input = makeV14Input();
+    const hooks = await buildV14Hooks(input as never);
+
+    await hooks["chat.message"]!({
+      type: "chat.message",
+      sessionID: "sess_task_ignore_hook",
+      message: { role: "user", text: "hello" },
+    });
+
+    expect(input.promptSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase 7.5.6 — Zero-pollution stdout-capture test for buildV14Hooks
 // ---------------------------------------------------------------------------
 
