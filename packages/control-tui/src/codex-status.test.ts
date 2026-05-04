@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  createCliCodexStatusProvider,
   createCodexStatusExecutor,
   formatCodexStatusLines,
   parseCodexStatus,
   runCodexStatusPoll,
   stripAnsiForCodexStatus,
   type CodexStatusExecutor,
+  type CodexStatusProvider,
   type CodexStatusPtyFactory,
   type CodexStatusPollState,
 } from "./codex-status.js";
@@ -82,27 +84,121 @@ describe("codex status", () => {
     })).toEqual(["Codex status: no disponible"]);
   });
 
+  it("formats web analytics usage and stale snapshots", () => {
+    expect(
+      formatCodexStatusLines({
+        timestamp: "now",
+        source: "chatgpt-web-analytics",
+        model: "gpt-5.5",
+        usage: {
+          limit5h: "65%",
+          weeklyLimit: "32%",
+          creditsRemaining: "0",
+        },
+        raw: "",
+        stale: true,
+      }),
+    ).toEqual(["gpt-5.5 · stale", "5h 65% · week 32% · créditos 0"]);
+  });
+
+  it("polls through a status provider and preserves source", async () => {
+    const state: CodexStatusPollState = { inFlight: false };
+    const provider: CodexStatusProvider = {
+      name: "manual",
+      async read(now) {
+        return {
+          timestamp: now?.toISOString() ?? "now",
+          source: "manual",
+          model: "codex manual",
+          usage: { limit5h: "65%" },
+          raw: "manual",
+        };
+      },
+    };
+
+    const snapshot = await runCodexStatusPoll({
+      state,
+      provider,
+      outputPath: outputPath(),
+      now: new Date("2026-05-04T10:00:00.000Z"),
+    });
+
+    expect(snapshot).toMatchObject({
+      timestamp: "2026-05-04T10:00:00.000Z",
+      source: "manual",
+      model: "codex manual",
+      usage: { limit5h: "65%" },
+    });
+    expect(state.snapshot).toBe(snapshot);
+  });
+
+  it("keeps the previous snapshot as stale when provider polling fails", async () => {
+    const state: CodexStatusPollState = {
+      inFlight: false,
+      snapshot: {
+        timestamp: "2026-05-04T09:00:00.000Z",
+        source: "chatgpt-web-analytics",
+        model: "gpt-5.5",
+        usage: { limit5h: "65%", creditsRemaining: "0" },
+        raw: "previous",
+      },
+    };
+    const provider: CodexStatusProvider = {
+      name: "chatgpt-web-analytics",
+      async read() {
+        throw new Error("analytics unavailable");
+      },
+    };
+
+    const snapshot = await runCodexStatusPoll({
+      state,
+      provider,
+      outputPath: outputPath(),
+      now: new Date("2026-05-04T10:00:00.000Z"),
+    });
+
+    expect(snapshot).toMatchObject({
+      timestamp: "2026-05-04T10:00:00.000Z",
+      source: "chatgpt-web-analytics",
+      model: "gpt-5.5",
+      usage: { limit5h: "65%", creditsRemaining: "0" },
+      raw: "previous",
+      error: "analytics unavailable",
+      stale: true,
+    });
+  });
+
   it("does not overlap polls while one is in flight", async () => {
     let calls = 0;
-    let resolveFirst: (value: string) => void = () => undefined;
-    const executor: CodexStatusExecutor = (() => {
-      calls++;
-      return new Promise<string>((resolve) => {
-        resolveFirst = resolve;
-      });
-    }) as CodexStatusExecutor;
+    let resolveFirst: (value: void) => void = () => undefined;
+    const provider: CodexStatusProvider = {
+      name: "manual",
+      async read(now) {
+        calls++;
+        await new Promise<void>((resolve) => {
+          resolveFirst = resolve;
+        });
+        return {
+          timestamp: now?.toISOString() ?? "now",
+          source: "manual",
+          model: "slow provider",
+          usage: {},
+          raw: "",
+        };
+      },
+    };
     const state: CodexStatusPollState = { inFlight: false };
 
-    const first = runCodexStatusPoll({ state, executor, outputPath: outputPath() });
-    const skipped = await runCodexStatusPoll({ state, executor, outputPath: outputPath() });
+    const first = runCodexStatusPoll({ state, provider, outputPath: outputPath() });
+    const skipped = await runCodexStatusPoll({ state, provider, outputPath: outputPath() });
 
     expect(skipped).toBeUndefined();
     expect(calls).toBe(1);
 
-    resolveFirst(SAMPLE);
+    resolveFirst();
     const snapshot = await first;
 
-    expect(snapshot?.model).toBe("gpt-5.5 (high reasoning)");
+    expect(snapshot?.model).toBe("slow provider");
     expect(state.inFlight).toBe(false);
   });
 
@@ -151,5 +247,15 @@ describe("codex status", () => {
     expect(snapshot?.error).toBe("codex /status unavailable: node-pty could not be loaded");
     expect(formatCodexStatusLines(snapshot)).toEqual(["Codex status: no disponible"]);
     expect(state.inFlight).toBe(false);
+  });
+
+  it("wraps the PTY executor as the codex-cli provider", async () => {
+    const executor = (async () => SAMPLE) as CodexStatusExecutor;
+    const snapshot = await createCliCodexStatusProvider(executor).read(
+      new Date("2026-05-04T10:00:00.000Z"),
+    );
+
+    expect(snapshot.source).toBe("codex-cli");
+    expect(snapshot.usage.limit5h).toBe("51%");
   });
 });

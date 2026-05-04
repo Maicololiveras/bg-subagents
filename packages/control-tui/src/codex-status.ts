@@ -4,16 +4,21 @@ import { dirname, join } from "node:path";
 
 export interface CodexStatusSnapshot {
   timestamp: string;
+  source?: "codex-cli" | "chatgpt-web-analytics" | "manual";
   model?: string;
   account?: string;
   session?: string;
   usage: {
     contextAvailable?: string;
     limit5h?: string;
+    limit5hReset?: string;
     weeklyLimit?: string;
+    weeklyLimitReset?: string;
+    creditsRemaining?: string;
   };
   raw: string;
   error?: string;
+  stale?: boolean;
 }
 
 export interface CodexStatusLogger {
@@ -21,6 +26,12 @@ export interface CodexStatusLogger {
 }
 
 export type CodexStatusExecutor = (() => Promise<string>) & { cancel?: () => void };
+
+export interface CodexStatusProvider {
+  readonly name: NonNullable<CodexStatusSnapshot["source"]>;
+  read(now?: Date): Promise<CodexStatusSnapshot>;
+  cancel?(): void;
+}
 
 interface CodexStatusPty {
   onData: (callback: (data: string) => void) => { dispose: () => void };
@@ -53,6 +64,7 @@ export interface CodexStatusMonitorOptions {
   outputPath?: string;
   onSnapshot?: (snapshot: CodexStatusSnapshot) => void;
   logger?: CodexStatusLogger;
+  provider?: CodexStatusProvider;
   executor?: CodexStatusExecutor;
 }
 
@@ -117,16 +129,44 @@ export function parseCodexStatus(stdout: string, now = new Date()): CodexStatusS
   return snapshot;
 }
 
+export function createCliCodexStatusProvider(
+  executor: CodexStatusExecutor = createCodexStatusExecutor(),
+): CodexStatusProvider {
+  const provider: CodexStatusProvider = {
+    name: "codex-cli",
+    async read(now) {
+      const stdout = await executor();
+      const snapshot = parseCodexStatus(stdout, now);
+      snapshot.source = "codex-cli";
+      return snapshot;
+    },
+  };
+  if (executor.cancel) provider.cancel = executor.cancel;
+  return provider;
+}
+
 export function formatCodexStatusLines(snapshot?: CodexStatusSnapshot): string[] {
   if (!snapshot) return ["Codex status: esperando..."];
-  if (snapshot.error) return ["Codex status: no disponible"];
+  if (snapshot.error && !snapshot.stale) return ["Codex status: no disponible"];
 
   const model = snapshot.model ?? "codex";
   const context = snapshot.usage.contextAvailable;
   const limit5h = snapshot.usage.limit5h;
   const weekly = snapshot.usage.weeklyLimit;
-  const first = context ? `${model} · ${context} ctx` : model;
-  const second = [limit5h ? `5h ${limit5h}` : undefined, weekly ? `week ${weekly}` : undefined]
+  const credits = snapshot.usage.creditsRemaining;
+  const firstParts = [
+    model,
+    context ? `${context} ctx` : undefined,
+    snapshot.stale ? "stale" : undefined,
+  ];
+  const first = firstParts.filter(Boolean).join(" · ");
+  const second = [
+    limit5h ? `5h ${limit5h}` : undefined,
+    snapshot.usage.limit5hReset ? `reset ${snapshot.usage.limit5hReset}` : undefined,
+    weekly ? `week ${weekly}` : undefined,
+    snapshot.usage.weeklyLimitReset ? `reset ${snapshot.usage.weeklyLimitReset}` : undefined,
+    credits ? `créditos ${credits}` : undefined,
+  ]
     .filter(Boolean)
     .join(" · ");
 
@@ -232,7 +272,8 @@ export function createCodexStatusExecutor(
 
 export async function runCodexStatusPoll(options: {
   state: CodexStatusPollState;
-  executor: CodexStatusExecutor;
+  provider?: CodexStatusProvider;
+  executor?: CodexStatusExecutor;
   outputPath?: string;
   onSnapshot?: (snapshot: CodexStatusSnapshot) => void;
   logger?: CodexStatusLogger;
@@ -242,19 +283,25 @@ export async function runCodexStatusPoll(options: {
   options.state.inFlight = true;
 
   try {
-    const stdout = await options.executor();
-    const snapshot = parseCodexStatus(stdout, options.now);
+    const provider = options.provider ?? createCliCodexStatusProvider(options.executor);
+    const snapshot = await provider.read(options.now);
+    if (!snapshot.source) snapshot.source = provider.name;
     options.state.snapshot = snapshot;
     writeCodexStatusSnapshot(snapshot, options.outputPath);
     options.onSnapshot?.(snapshot);
     return snapshot;
   } catch (err) {
-    const snapshot: CodexStatusSnapshot = {
-      timestamp: (options.now ?? new Date()).toISOString(),
-      usage: {},
-      raw: "",
-      error: err instanceof Error ? err.message : String(err),
-    };
+    const error = err instanceof Error ? err.message : String(err);
+    const previous = options.state.snapshot;
+    const snapshot: CodexStatusSnapshot = previous
+      ? { ...previous, timestamp: (options.now ?? new Date()).toISOString(), error, stale: true }
+      : {
+          timestamp: (options.now ?? new Date()).toISOString(),
+          usage: {},
+          raw: "",
+          error,
+        };
+    if (!previous && options.provider) snapshot.source = options.provider.name;
     options.state.snapshot = snapshot;
     writeCodexStatusSnapshot(snapshot, options.outputPath);
     options.onSnapshot?.(snapshot);
@@ -268,14 +315,18 @@ export async function runCodexStatusPoll(options: {
 export function createCodexStatusMonitor(options: CodexStatusMonitorOptions = {}) {
   const intervalMs = options.intervalMs ?? 5000;
   const state: CodexStatusPollState = { inFlight: false };
-  const executor = options.executor ?? createCodexStatusExecutor(options.timeoutMs ?? 4000);
+  const provider =
+    options.provider ??
+    createCliCodexStatusProvider(
+      options.executor ?? createCodexStatusExecutor(options.timeoutMs ?? 4000),
+    );
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = true;
 
   const poll = async () => {
     const pollOptions: Parameters<typeof runCodexStatusPoll>[0] = {
       state,
-      executor,
+      provider,
     };
     if (options.outputPath) pollOptions.outputPath = options.outputPath;
     if (options.onSnapshot) {
@@ -298,7 +349,7 @@ export function createCodexStatusMonitor(options: CodexStatusMonitorOptions = {}
       stopped = true;
       if (timer) clearTimeout(timer);
       timer = undefined;
-      executor.cancel?.();
+      provider.cancel?.();
     },
     getSnapshot() {
       return state.snapshot;
