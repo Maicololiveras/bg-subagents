@@ -37,6 +37,10 @@ import {
   type ActiveTask,
 } from "./events.js";
 import { moveTaskToBg, killTask, deliverBgResult } from "./actions.js";
+import {
+  markAutoFlipParent,
+  shouldAutoFlipTask,
+} from "./auto-flip.js";
 
 const PLUGIN_ID = "bg-subagents-control-tui";
 const SIDEBAR_ORDER = 80;
@@ -269,7 +273,6 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
   // Without this, the new BG child we create also fires session.created → would
   // trigger auto-flip again → infinite loop (observed: 53 cascading completions).
   const recentlyFlippedParents = new Map<string, number>();
-  const ANTI_LOOP_WINDOW_MS = 30_000;
 
   const disposeEvents = subscribeToSessionEvents({
     api,
@@ -280,29 +283,25 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
       // the synchronous `task` tool, immediately convert it to async by
       // aborting + respawning with task_bg. Plugin-side deterministic — does
       // NOT depend on the LLM choosing task_bg.
-      const mode = policies()[task.agent];
-      if (mode !== "bg") {
+      const decision = shouldAutoFlipTask(task, policies(), recentlyFlippedParents);
+      if (decision.reason === "not-bg-policy") {
         logger.info("auto-flip: agent not BG-policy, skipping", {
           agent: task.agent,
-          mode: mode ?? "default",
+          mode: policies()[task.agent] ?? "default",
         });
         return;
       }
 
-      // Anti-loop guard: skip if this parent was auto-flipped in the last
-      // 30s. This blocks the cascade where moveTaskToBg's own session.create
-      // fires session.created → triggers another auto-flip.
       const parentID = task.parentSessionID;
-      if (parentID) {
-        const lastFlip = recentlyFlippedParents.get(parentID);
-        if (lastFlip && Date.now() - lastFlip < ANTI_LOOP_WINDOW_MS) {
-          logger.info("auto-flip: skipping (parent recently flipped)", {
-            agent: task.agent,
-            parent: parentID,
-            ms_since_last: Date.now() - lastFlip,
-          });
-          return;
-        }
+      // Anti-loop guard: skip if this parent was auto-flipped recently. This
+      // blocks the cascade where moveTaskToBg's own session.create fires again.
+      if (!decision.shouldFlip) {
+        logger.info("auto-flip: skipping (parent recently flipped)", {
+          agent: task.agent,
+          parent: parentID,
+          ms_since_last: decision.msSinceLastFlip,
+        });
+        return;
       }
 
       logger.info("auto-flip: agent is BG-policy, scheduling move-to-BG", {
@@ -314,7 +313,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
       setTimeout(() => {
         // Mark parent BEFORE calling moveTaskToBg so the respawned child's
         // session.created event sees the recent-flip mark and is skipped.
-        if (parentID) recentlyFlippedParents.set(parentID, Date.now());
+        markAutoFlipParent(task, recentlyFlippedParents);
         void moveTaskToBg({ api, registry, logger: actionLogger }, task).then(
           (result) => {
             if (!result.ok) {
