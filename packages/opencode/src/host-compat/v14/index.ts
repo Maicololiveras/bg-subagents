@@ -32,7 +32,7 @@ import { createV14Delivery } from "./delivery.js";
 import { buildSystemTransform } from "./system-transform.js";
 import { buildV14EventHandler } from "./event-handler.js";
 import { buildMessagesTransformHook } from "./messages-transform.js";
-import { getSharedPolicyStore } from "./slash-commands.js";
+import { getSharedPolicyStore, interceptTaskCommand } from "./slash-commands.js";
 import { registerFromServer } from "../../tui-plugin/shared-state.js";
 
 // -----------------------------------------------------------------------------
@@ -95,6 +95,7 @@ export async function buildV14Hooks(
     input: { sessionID?: string; model: unknown },
     output: { messages: Array<{ parts: unknown[] }> },
   ) => Promise<void>;
+  "chat.message"?: (event: unknown) => Promise<void>;
 }> {
   const logger: Logger = overrides.logger ?? createLogger("v14:boot");
   const sessionID = overrides.sessionID ?? "session_unknown";
@@ -200,6 +201,28 @@ export async function buildV14Hooks(
     policyStore,
     logger,
   });
+
+  const chatMessage = async (event: unknown): Promise<void> => {
+    const message = normalizeChatMessageEvent(event);
+    if (message.role !== undefined && message.role !== "user") return;
+    if (message.text === undefined || !message.text.trim().startsWith("/task")) return;
+
+    const result = await interceptTaskCommand(
+      message.text,
+      message.sessionID ?? sessionID,
+      registry,
+      policyStore,
+    );
+    if (!result.handled) return;
+
+    await input.client.session.prompt({
+      path: { id: message.sessionID ?? sessionID },
+      body: {
+        noReply: true,
+        parts: [{ type: "text", text: result.reply }],
+      },
+    });
+  };
 
   // ---------------------------------------------------------------------------
   // SharedPluginState (Phase 11.3) — wire server-side state for TUI plugin
@@ -373,6 +396,7 @@ export async function buildV14Hooks(
       task_bg: taskBgTool,
     },
     event: eventHandler,
+    "chat.message": chatMessage,
     "experimental.chat.system.transform": systemTransform,
     "experimental.chat.messages.transform": messagesTransform as never,
     "tool.execute.before": toolExecuteBefore,
@@ -426,4 +450,56 @@ function buildPlanReviewPolicy(loaded: LoadedPolicy): FlatPolicyConfig {
   }
 
   return policy;
+}
+
+function normalizeChatMessageEvent(event: unknown): {
+  text: string | undefined;
+  role: string | undefined;
+  sessionID: string | undefined;
+} {
+  const root = asRecord(event) ?? {};
+  const payload = asRecord(root["event"]) ?? root;
+  const properties = asRecord(payload["properties"]);
+  const message = asRecord(payload["message"]) ?? asRecord(properties?.["message"]) ?? payload;
+
+  const text =
+    stringValue(message["text"]) ??
+    stringValue(message["content"]) ??
+    stringValue(properties?.["text"]) ??
+    stringValue(payload["text"]) ??
+    textFromParts(message["parts"]) ??
+    textFromParts(payload["parts"]);
+
+  const role =
+    stringValue(message["role"]) ?? stringValue(properties?.["role"]) ?? stringValue(payload["role"]);
+
+  const sessionID =
+    stringValue(message["sessionID"]) ??
+    stringValue(message["session_id"]) ??
+    stringValue(properties?.["sessionID"]) ??
+    stringValue(properties?.["session_id"]) ??
+    stringValue(payload["sessionID"]) ??
+    stringValue(payload["session_id"]);
+
+  return { text, role, sessionID };
+}
+
+function textFromParts(parts: unknown): string | undefined {
+  if (!Array.isArray(parts)) return undefined;
+  const text = parts
+    .map((part) => {
+      const record = asRecord(part);
+      return record?.["type"] === "text" ? stringValue(record["text"]) : undefined;
+    })
+    .filter((value): value is string => value !== undefined)
+    .join("");
+  return text.length > 0 ? text : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
