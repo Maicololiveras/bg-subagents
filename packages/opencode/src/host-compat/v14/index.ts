@@ -13,12 +13,10 @@
  * Spec: openspec/changes/opencode-plan-review-live-control/specs/host-compat/spec.md
  */
 
-import * as os from "node:os";
-import * as path from "node:path";
-
 import {
   HARDCODED_DEFAULT_POLICY,
   HistoryStore,
+  loadPolicy,
   PolicyResolver,
   TaskRegistry,
   createLogger,
@@ -194,7 +192,8 @@ export async function buildV14Hooks(
   // Plan Review hook (Phase 8-9)
   // ---------------------------------------------------------------------------
 
-  const planReviewPolicy: FlatPolicyConfig = overrides.planReviewPolicy ?? {};
+  const planReviewPolicy: FlatPolicyConfig =
+    overrides.planReviewPolicy ?? buildPlanReviewPolicy(await loadPolicySafe());
   const policyStore = getSharedPolicyStore();
   const messagesTransform = buildMessagesTransformHook({
     policy: planReviewPolicy,
@@ -250,23 +249,12 @@ export async function buildV14Hooks(
     toolDefinitionLogger.info("tool.definition fired", { toolID: input.toolID });
     if (input.toolID !== "task" && input.toolID !== "task_bg") return;
     try {
-      const fs = await import("node:fs");
-      const filePath = resolvePolicyJsoncPath();
-      if (!fs.existsSync(filePath)) {
-        toolDefinitionLogger.info("policy.jsonc not found — skip steering", {
-          path: filePath,
-        });
-        return;
-      }
-      const raw = fs.readFileSync(filePath, "utf8");
-      const policy = JSON.parse(raw) as {
-        default_mode_by_agent_name?: Record<string, "bg" | "fg">;
-      };
+      const { policy } = await loadPolicySafe();
       const bgAgents = Object.entries(policy.default_mode_by_agent_name ?? {})
-        .filter(([, mode]) => mode === "bg")
+        .filter(([, mode]) => mode === "background")
         .map(([name]) => name);
       const fgAgents = Object.entries(policy.default_mode_by_agent_name ?? {})
-        .filter(([, mode]) => mode === "fg")
+        .filter(([, mode]) => mode === "foreground")
         .map(([name]) => name);
       toolDefinitionLogger.info("policy loaded", {
         toolID: input.toolID,
@@ -336,13 +324,7 @@ export async function buildV14Hooks(
   ): Promise<void> => {
     if (input.tool !== "task") return;
     try {
-      const fs = await import("node:fs");
-      const filePath = resolvePolicyJsoncPath();
-      if (!fs.existsSync(filePath)) return;
-      const raw = fs.readFileSync(filePath, "utf8");
-      const policy = JSON.parse(raw) as {
-        default_mode_by_agent_name?: Record<string, "bg" | "fg">;
-      };
+      const { policy } = await loadPolicySafe();
       const args = output.args as { subagent_type?: string };
       const subagentType = args?.subagent_type;
       if (!subagentType) {
@@ -352,7 +334,7 @@ export async function buildV14Hooks(
         return;
       }
       const mode = policy.default_mode_by_agent_name?.[subagentType];
-      if (mode !== "bg") {
+      if (mode !== "background") {
         toolBeforeLogger.info("task call passes policy", {
           callID: input.callID,
           subagent_type: subagentType,
@@ -414,42 +396,34 @@ export async function buildV14Hooks(
  * the file each call, so hot-reload works without explicit file watching.
  */
 function buildDefaultResolver(): PolicyResolver {
-  return new PolicyResolver(async () => {
-    const filePath = resolvePolicyJsoncPath();
-    try {
-      const fs = await import("node:fs");
-      if (!fs.existsSync(filePath)) {
-        return {
-          policy: HARDCODED_DEFAULT_POLICY,
-          source: "default",
-          warnings: [],
-        };
-      }
-      const raw = fs.readFileSync(filePath, "utf8");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      // Merge with hardcoded baseline (file overrides individual fields)
-      const policy = {
-        ...HARDCODED_DEFAULT_POLICY,
-        ...parsed,
-      } as typeof HARDCODED_DEFAULT_POLICY;
-      return {
-        policy,
-        source: "file",
-        warnings: [],
-      } as LoadedPolicy;
-    } catch (err) {
-      // On any read/parse error, fall back to hardcoded — never crash the host
-      return {
-        policy: HARDCODED_DEFAULT_POLICY,
-        source: "default",
-        warnings: [
-          `failed to load ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
-        ],
-      };
-    }
-  });
+  return new PolicyResolver(loadPolicySafe);
 }
 
-function resolvePolicyJsoncPath(): string {
-  return path.join(os.homedir(), ".config", "bg-subagents", "policy.jsonc");
+async function loadPolicySafe(): Promise<LoadedPolicy> {
+  try {
+    return await loadPolicy();
+  } catch (err) {
+    return {
+      policy: HARDCODED_DEFAULT_POLICY,
+      source: "default",
+      warnings: [`failed to load policy: ${err instanceof Error ? err.message : String(err)}`],
+    };
+  }
+}
+
+function buildPlanReviewPolicy(loaded: LoadedPolicy): FlatPolicyConfig {
+  const policy: FlatPolicyConfig = {
+    "sdd-apply": "foreground",
+    "sdd-verify": "foreground",
+  };
+
+  for (const [agentName, mode] of Object.entries(
+    loaded.policy.default_mode_by_agent_name ?? {},
+  )) {
+    if (mode === "background" || mode === "foreground") {
+      policy[agentName] = mode;
+    }
+  }
+
+  return policy;
 }

@@ -15,6 +15,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { buildV14Hooks } from "../../../host-compat/v14/index.js";
 import {
@@ -48,6 +51,12 @@ function makeLogger() {
     debug: vi.fn(),
     child: vi.fn(),
   };
+}
+
+function toolParts(output: { messages: Array<{ parts: Array<{ type?: string; toolName?: string }> }> }) {
+  return output.messages[0]!.parts.filter(
+    (p) => p.type === "tool-invocation" && p.toolName !== undefined,
+  );
 }
 
 describe("buildV14Hooks — shape", () => {
@@ -190,6 +199,117 @@ describe("buildV14Hooks — Plan Review hook wired (Phase 9.2)", () => {
         p.type === "tool-invocation" && p.toolName !== undefined,
     ) as Array<{ toolName: string }>;
     expect(taskParts[0]?.toolName).toBe("task_bg");
+  });
+
+  it("messages.transform loads policy.jsonc bg/fg modes and keeps critical SDD agents foreground", async () => {
+    const oldXdgConfigHome = process.env["XDG_CONFIG_HOME"];
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bg-subagents-v14-policy-"));
+    process.env["XDG_CONFIG_HOME"] = tmpDir;
+
+    try {
+      const configDir = path.join(tmpDir, "bg-subagents");
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(
+        path.join(configDir, "policy.jsonc"),
+        JSON.stringify({
+          default_mode_by_agent_name: {
+            "sdd-explore": "bg",
+            "sdd-apply": "fg",
+            "sdd-verify": "fg",
+          },
+        }),
+        "utf8",
+      );
+
+      const input = makeV14Input();
+      const hooks = await buildV14Hooks(input as never);
+      const transformHook = hooks["experimental.chat.messages.transform"];
+      const output = {
+        messages: [
+          {
+            parts: [
+              {
+                type: "tool-invocation",
+                toolInvocationId: "call_explore",
+                toolName: "task",
+                args: { subagent_type: "sdd-explore", prompt: "explore" },
+              },
+              {
+                type: "tool-invocation",
+                toolInvocationId: "call_apply",
+                toolName: "task",
+                args: { subagent_type: "sdd-apply", prompt: "apply" },
+              },
+              {
+                type: "tool-invocation",
+                toolInvocationId: "call_verify",
+                toolName: "task",
+                args: { subagent_type: "sdd-verify", prompt: "verify" },
+              },
+            ],
+          },
+        ],
+      };
+
+      await transformHook!({ sessionID: "sess_policy_file", model: {} }, output as never);
+
+      const parts = toolParts(output);
+      expect(parts[0]?.toolName).toBe("task_bg");
+      expect(parts[1]?.toolName).toBe("task");
+      expect(parts[2]?.toolName).toBe("task");
+    } finally {
+      if (oldXdgConfigHome === undefined) {
+        delete process.env["XDG_CONFIG_HOME"];
+      } else {
+        process.env["XDG_CONFIG_HOME"] = oldXdgConfigHome;
+      }
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("messages.transform uses foreground safe defaults for critical SDD agents when policy is absent", async () => {
+    const oldXdgConfigHome = process.env["XDG_CONFIG_HOME"];
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "bg-subagents-v14-empty-"));
+    process.env["XDG_CONFIG_HOME"] = tmpDir;
+
+    try {
+      const input = makeV14Input();
+      const hooks = await buildV14Hooks(input as never);
+      const transformHook = hooks["experimental.chat.messages.transform"];
+      const output = {
+        messages: [
+          {
+            parts: [
+              {
+                type: "tool-invocation",
+                toolInvocationId: "call_apply_safe",
+                toolName: "task",
+                args: { subagent_type: "sdd-apply", prompt: "apply" },
+              },
+              {
+                type: "tool-invocation",
+                toolInvocationId: "call_verify_safe",
+                toolName: "task",
+                args: { subagent_type: "sdd-verify", prompt: "verify" },
+              },
+            ],
+          },
+        ],
+      };
+
+      await transformHook!({ sessionID: "sess_safe_default", model: {} }, output as never);
+
+      const parts = toolParts(output);
+      expect(parts[0]?.toolName).toBe("task");
+      expect(parts[1]?.toolName).toBe("task");
+    } finally {
+      if (oldXdgConfigHome === undefined) {
+        delete process.env["XDG_CONFIG_HOME"];
+      } else {
+        process.env["XDG_CONFIG_HOME"] = oldXdgConfigHome;
+      }
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
