@@ -112,8 +112,14 @@ export interface BusEvent {
 export interface SessionApi {
   /** Create a child session for a background subagent run. */
   create?(opts: SessionCreateOpts): Promise<SessionHandle>;
-  /** Send a prompt to the current or a specified session. */
+  /** Send a prompt to the current or a specified session (BLOCKING — awaits LLM response). */
   prompt?(opts: SessionPromptOpts): Promise<unknown>;
+  /**
+   * Send a prompt asynchronously — returns immediately, LLM runs in background.
+   * The session emits `session.idle` when complete. Use this for true non-blocking
+   * background subagent dispatch (added v0.4 / OpenCode 1.14.28+).
+   */
+  promptAsync?(opts: SessionPromptOpts): Promise<unknown>;
   /**
    * Inject a synthetic assistant message into the user-facing chat transcript.
    * Used by `chatMessageFallback` when no bus subscriber acks within the

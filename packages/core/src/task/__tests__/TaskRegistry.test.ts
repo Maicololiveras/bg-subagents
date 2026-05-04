@@ -250,3 +250,57 @@ describe("TaskRegistry / concurrency + gc + history integration", () => {
     expect(historyStub.append).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Single-delivery guarantee (Phase 6 — delivery dedupe)
+// ---------------------------------------------------------------------------
+//
+// Spec: openspec/changes/opencode-plan-review-live-control/specs/delivery/spec.md
+//   "Each task MUST produce at most one delivery to the main chat, regardless
+//    of whether primary or fallback succeeded. `markDelivered(task_id)` MUST
+//    return true the first time and false on every subsequent call."
+
+describe("TaskRegistry / delivery dedupe", () => {
+  it("markDelivered returns true the first time for a given id", () => {
+    const reg = new TaskRegistry();
+    const handle = reg.spawn({ run: async () => "ok" });
+    expect(reg.markDelivered(handle.id)).toBe(true);
+  });
+
+  it("markDelivered returns false on subsequent calls for the same id", () => {
+    const reg = new TaskRegistry();
+    const handle = reg.spawn({ run: async () => "ok" });
+    reg.markDelivered(handle.id);
+    expect(reg.markDelivered(handle.id)).toBe(false);
+    expect(reg.markDelivered(handle.id)).toBe(false);
+  });
+
+  it("markDelivered tracks ids independently", () => {
+    const reg = new TaskRegistry();
+    const a = reg.spawn({ run: async () => "a" });
+    const b = reg.spawn({ run: async () => "b" });
+    expect(reg.markDelivered(a.id)).toBe(true);
+    expect(reg.markDelivered(b.id)).toBe(true);
+    expect(reg.markDelivered(a.id)).toBe(false);
+    expect(reg.markDelivered(b.id)).toBe(false);
+  });
+
+  it("markDelivered works for ids that were never spawned (defensive)", () => {
+    const reg = new TaskRegistry();
+    const fakeId = unsafeTaskId("tsk_synthetic_never_spawned");
+    expect(reg.markDelivered(fakeId)).toBe(true);
+    expect(reg.markDelivered(fakeId)).toBe(false);
+  });
+
+  it("race: three simultaneous markDelivered calls yield exactly one true", async () => {
+    const reg = new TaskRegistry();
+    const handle = reg.spawn({ run: async () => "ok" });
+    const results = await Promise.all([
+      Promise.resolve(reg.markDelivered(handle.id)),
+      Promise.resolve(reg.markDelivered(handle.id)),
+      Promise.resolve(reg.markDelivered(handle.id)),
+    ]);
+    const trues = results.filter(Boolean).length;
+    expect(trues).toBe(1);
+  });
+});

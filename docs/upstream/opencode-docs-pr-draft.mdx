@@ -1,0 +1,211 @@
+{/*
+  DRAFT — ready to paste as PR against packages/web/src/content/docs/plugins.mdx
+  in anomalyco/opencode (target branch: dev).
+
+  Drafted 2026-04-24 by @Maicololiveras as part of bg-subagents v1.0 development.
+  Source: docs/upstream/opencode-docs-pr.md in https://github.com/Maicololiveras/bg-subagents
+
+  Instructions for Michael:
+  1. Open packages/web/src/content/docs/plugins.mdx in anomalyco/opencode.
+  2. Locate the existing "Plugins" section (or the end of the file).
+  3. Paste everything BELOW this comment block as a new "TUI Plugins" section.
+  4. Submit as PR against the `dev` branch.
+  5. Reference the upstream issue (filed from docs/upstream/opencode-docs-pr.md plan).
+
+  This draft was built from first-hand spike evidence (tq1-runtime-result, 2026-04-24):
+  the `id` REQUIRED gotcha, the two-file config split, and the TuiPluginApi surface
+  were all discovered empirically. Lost ~4 hours on the config-file error alone.
+  This doc exists so no one else loses those 4 hours.
+*/}
+
+---
+title: TUI Plugins
+description: Add visual UI extensions to OpenCode via TUI plugins — sidebar slots, keyboard shortcuts, and modal dialogs.
+---
+
+## TUI Plugins
+
+OpenCode supports **two kinds of plugins** that run in different contexts and are declared in separate config files:
+
+| Kind | Config file | Entry point | Purpose |
+|------|-------------|-------------|---------|
+| Server plugin | `opencode.json` (`plugins[]`) | `export default { server(ctx) {} }` | Server-side hooks: tools, system prompt, events, slash commands |
+| TUI plugin | `tui.json` (`plugins[]`) | `export default { id: "...", tui: TuiPlugin }` | UI extensions: sidebar slots, keybinds, modal dialogs |
+
+**Common mistake**: putting a TUI plugin in `opencode.json` causes the server loader to reject it with:
+```
+must default export an object with server()
+```
+If you see that error, check that your plugin is declared in `tui.json`, not `opencode.json`.
+
+---
+
+### Two-config-file architecture
+
+Each project (or user) can have both files:
+
+```
+~/.config/opencode/opencode.json   ← server plugins (global)
+~/.config/opencode/tui.json        ← TUI plugins (global)
+
+./opencode.json                    ← server plugins (project-local, merged)
+./tui.json                         ← TUI plugins (project-local, merged)
+```
+
+Both files use the same `{ "plugins": ["package-name"] }` shape. OpenCode merges global and project-local entries at startup.
+
+---
+
+### Default export shape for TUI plugins
+
+A TUI plugin module must default-export an object with **both** `id` and `tui`:
+
+```ts
+import type { TuiPlugin } from "@opencode-ai/plugin/tui";
+
+const myPlugin: TuiPlugin = async (api, _options, _meta) => {
+  // register slots, commands, keybinds, dialogs here
+};
+
+export default {
+  id: "my-plugin",   // REQUIRED — runtime throws TypeError without this
+  tui: myPlugin,
+};
+```
+
+> **`id` is required at runtime.** The TypeScript SDK type declares `id?: string` (optional), but the TUI loader enforces its presence and throws `TypeError: Path plugin <path> must export id` if it is absent. This is a known type–runtime mismatch. Always include `id`.
+
+---
+
+### Minimal TUI plugin example
+
+A complete working TUI plugin that registers a sidebar slot and a keybind:
+
+```ts
+// my-tui-plugin.ts
+import type { TuiPlugin } from "@opencode-ai/plugin/tui";
+
+const plugin: TuiPlugin = async (api, _options, _meta) => {
+  // 1. Register a sidebar slot
+  api.slots.register({
+    slots: {
+      sidebar_content: (_ctx) => {
+        // Return display data for your sidebar section.
+        // Phase v1.1+: return a SolidJS JSX element via @opentui/solid.
+        return { lines: ["Hello from my-plugin!"] };
+      },
+    },
+  } as never);
+
+  // 2. Register a keyboard shortcut
+  api.command.register(() => [
+    {
+      title: "My Plugin Action",
+      value: "my-plugin:action",
+      keybind: "ctrl+m",
+      onSelect: () => {
+        api.ui.toast({ variant: "info", message: "Ctrl+M pressed!" });
+      },
+    },
+  ]);
+
+  // 3. Clean up on dispose
+  api.lifecycle.onDispose(() => {
+    // cancel timers, subscriptions, etc.
+  });
+};
+
+export default { id: "my-plugin", tui: plugin };
+```
+
+Declare it in `tui.json`:
+
+```json
+{
+  "plugins": ["./my-tui-plugin.ts"]
+}
+```
+
+---
+
+### `TuiPluginApi` surface
+
+The `api` argument passed to your `TuiPlugin` function provides:
+
+| Namespace | Key APIs | Purpose |
+|-----------|----------|---------|
+| `api.slots` | `register(plugin)` | Register a `sidebar_content` (or other) slot |
+| `api.command` | `register(provider: () => TuiCommand[])` | Register commands with optional `keybind` field |
+| `api.ui` | `toast({ variant, message })` | Show a toast notification |
+| `api.ui` | `dialog.replace(render, onClose?)` | Open a modal dialog |
+| `api.ui` | `dialog.clear()` | Close the current modal |
+| `api.ui` | `DialogSelect({ title, options, onSelect })` | Built-in option-picker dialog component |
+| `api.lifecycle` | `onDispose(fn)` | Register a cleanup callback |
+
+For the full type definitions, see `@opencode-ai/plugin/tui` in your `node_modules`.
+
+---
+
+### Installation options
+
+**Project-local** — affects only the current workspace:
+
+```json
+// ./tui.json
+{
+  "plugins": ["./path/to/my-tui-plugin.ts"]
+}
+```
+
+**Global** — affects all OpenCode sessions for the user:
+
+```json
+// ~/.config/opencode/tui.json
+{
+  "plugins": ["./path/to/my-tui-plugin.ts"]
+}
+```
+
+**From npm** — packages that ship a `./tui` subpath export:
+
+```json
+// tui.json
+{
+  "plugins": ["some-package/tui"]
+}
+```
+
+The package must declare the subpath in its `package.json` exports:
+
+```json
+{
+  "exports": {
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui-plugin/index.js"
+  }
+}
+```
+
+---
+
+### Troubleshooting
+
+**`must default export an object with server()`**
+
+You put the plugin in `opencode.json` instead of `tui.json`. Move the entry.
+
+**`TypeError: Path plugin <path> must export id`**
+
+Your default export is missing the `id` field. Add `id: "your-plugin-id"` to the exported object. Note: the TypeScript SDK type marks this optional, but the runtime requires it.
+
+**Sidebar slot renders nothing**
+
+The `sidebar_content` slot render function must return a non-null value. During development, returning a plain object (e.g. `{ text: "hello" }`) is valid for verification. The TUI host silently ignores `undefined` returns.
+
+**Keybind not firing**
+
+Ensure the `keybind` string matches the OpenCode key parser format. Tested formats: `"ctrl+b"`, `"ctrl+f"`, `"down"`. Unverified formats may silently fail. Check the OpenCode logs for registration errors.
+
+**TUI plugin loads but `current()` / shared state is empty**
+
+If your TUI plugin reads state from the server plugin via `globalThis`, there is a startup race: the TUI plugin may boot before the server plugin. Read the state lazily (inside the render function or command handler), not at boot time. Return empty/default values when state is unavailable.

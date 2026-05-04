@@ -8,8 +8,12 @@ import pluginDefault from "../plugin.js";
 import type { Bus, PluginServerContext } from "../types.js";
 
 function mkCtx(overrides: Partial<PluginServerContext> = {}): PluginServerContext {
+  // Minimum legacy shape so detectHostVersion classifies as "legacy".
+  // Real OpenCode pre-1.14 hosts always supply bus + session; tests stub them.
   return {
     session_id: "sess_test_1",
+    bus: { emit: () => undefined },
+    session: {} as never,
     ...overrides,
   };
 }

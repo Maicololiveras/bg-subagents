@@ -21,6 +21,10 @@
     "./plugin": {
       "types": "./dist/plugin.d.ts",
       "import": "./dist/plugin.js"
+    },
+    "./tui": {
+      "types": "./dist/tui-plugin/index.d.ts",
+      "import": "./dist/tui-plugin/index.js"
     }
   },
   "files": [
@@ -33,18 +37,35 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && tsup",
+    "build:types": "tsc -b",
+    "build:tui": "tsup",
     "clean": "tsc -b --clean",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@maicolextic/bg-subagents-protocol": "workspace:*",
-    "@maicolextic/bg-subagents-core": "workspace:*"
+    "@maicolextic/bg-subagents-core": "workspace:*",
+    "@maicolextic/bg-subagents-protocol": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.0",
+    "@opencode-ai/sdk": ">=1.14.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": false
+    },
+    "@opencode-ai/sdk": {
+      "optional": false
+    }
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "1.14.20",
+    "@opencode-ai/sdk": "1.14.20",
     "@types/node": "22.10.5",
+    "tsup": "8.5.1",
     "typescript": "5.7.3",
     "vitest": "2.1.8"
   },
