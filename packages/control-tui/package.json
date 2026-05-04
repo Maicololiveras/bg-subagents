@@ -39,7 +39,8 @@
   },
   "dependencies": {
     "@maicolextic/bg-subagents-core": "workspace:*",
-    "@maicolextic/bg-subagents-opencode": "workspace:*"
+    "@maicolextic/bg-subagents-opencode": "workspace:*",
+    "node-pty": "^1.0.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.14.28",
