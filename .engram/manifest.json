@@ -24,6 +24,14 @@
       "sessions": 7,
       "memories": 0,
       "prompts": 1
+    },
+    {
+      "id": "c9b9b12d",
+      "created_by": "maicolj",
+      "created_at": "2026-05-05T21:20:53Z",
+      "sessions": 10,
+      "memories": 0,
+      "prompts": 4
     }
   ]
 }
