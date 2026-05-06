@@ -32,6 +32,14 @@
       "sessions": 10,
       "memories": 0,
       "prompts": 4
+    },
+    {
+      "id": "4ce8b058",
+      "created_by": "maicolj",
+      "created_at": "2026-05-06T21:20:52Z",
+      "sessions": 5,
+      "memories": 0,
+      "prompts": 8
     }
   ]
 }
