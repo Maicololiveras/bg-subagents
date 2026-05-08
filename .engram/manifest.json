@@ -48,6 +48,14 @@
       "sessions": 6,
       "memories": 15,
       "prompts": 5
+    },
+    {
+      "id": "fd5be455",
+      "created_by": "maicolj",
+      "created_at": "2026-05-08T12:02:55Z",
+      "sessions": 1,
+      "memories": 1,
+      "prompts": 1
     }
   ]
 }
