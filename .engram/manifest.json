@@ -80,6 +80,14 @@
       "sessions": 0,
       "memories": 2,
       "prompts": 0
+    },
+    {
+      "id": "51c7cabe",
+      "created_by": "maicolj",
+      "created_at": "2026-05-15T20:20:51Z",
+      "sessions": 4,
+      "memories": 25,
+      "prompts": 0
     }
   ]
 }
