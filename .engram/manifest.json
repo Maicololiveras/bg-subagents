@@ -88,6 +88,14 @@
       "sessions": 4,
       "memories": 25,
       "prompts": 0
+    },
+    {
+      "id": "e8fbe34e",
+      "created_by": "maicolj",
+      "created_at": "2026-05-19T21:21:05Z",
+      "sessions": 0,
+      "memories": 9,
+      "prompts": 0
     }
   ]
 }
