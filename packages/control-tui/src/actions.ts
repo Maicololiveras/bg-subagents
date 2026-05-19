@@ -25,7 +25,9 @@
  * into a true background dispatch — without touching server-side hooks.
  */
 
+import { formatCompactAgentDelivery } from "@maicolextic/bg-subagents-core";
 import type { ActiveTask, TaskRegistry } from "./events.js";
+import { isProjectedActionEnabled } from "./activity-projection.js";
 
 export interface ActionContext {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -38,12 +40,20 @@ export interface ActionContext {
   };
 }
 
+export function projectedActionEnabled(task: ActiveTask, action: "move-to-BG" | "kill" | "cancel"): boolean {
+  return isProjectedActionEnabled(task, action);
+}
+
 /** Move an active task from FG (blocking parent) to BG (truly async). */
 export async function moveTaskToBg(
   ctx: ActionContext,
   task: ActiveTask,
 ): Promise<{ ok: boolean; newChildID?: string; error?: string }> {
   const { api, registry, logger } = ctx;
+
+  if (!projectedActionEnabled(task, "move-to-BG")) {
+    return { ok: false, error: "Projection policy denied move-to-BG for this task state" };
+  }
 
   if (task.status !== "running") {
     return { ok: false, error: `Task is ${task.status}, cannot move to BG` };
@@ -74,7 +84,7 @@ export async function moveTaskToBg(
             recoveredPrompt = textPart.text;
             logger?.info("moveTaskToBg: recovered prompt from child", {
               child: task.childSessionID,
-              prompt_len: recoveredPrompt.length,
+              prompt_len: textPart.text.length,
             });
             break;
           }
@@ -112,7 +122,9 @@ export async function moveTaskToBg(
   }
 
   // Mark the original as cancelled in our registry
-  registry.markStatus(task.childSessionID, "cancelled");
+  registry.markStatus(task.childSessionID, "cancelled", {
+    latestEvent: "aborted before BG respawn",
+  });
 
   // 2. Create a new child session (agent is set on the prompt call, not create)
   // SDK v2 signature: flat { parentID?, title?, ... } — no `body` wrapper, no `agent` field here
@@ -167,6 +179,9 @@ export async function moveTaskToBg(
   // 4. Update registry: mark original as bg-detached, add the new child as a task
   registry.markStatus(task.childSessionID, "bg-detached", {
     newChildSessionID: newChild.id,
+    mode: "BG",
+    latestEvent: `moved to BG: ${newChild.id}`,
+    detailRef: `child session/logs: ${newChild.id}`,
   });
 
   registry.upsertTask({
@@ -175,6 +190,9 @@ export async function moveTaskToBg(
     agent: task.agent,
     started: Date.now(),
     status: "running",
+    mode: "BG",
+    latestEvent: "BG prompt dispatched",
+    detailRef: `child session/logs: ${newChild.id}`,
     ...(recoveredPrompt ? { prompt: recoveredPrompt } : {}),
     ...(task.description
       ? { description: `${task.description} (BG, mid-flight moved)` }
@@ -197,10 +215,15 @@ export async function killTask(
   task: ActiveTask,
 ): Promise<{ ok: boolean; error?: string }> {
   const { api, registry, logger } = ctx;
+  if (!projectedActionEnabled(task, "kill")) {
+    return { ok: false, error: "Projection policy denied kill for this task state" };
+  }
   try {
     // SDK v2 flat signature
     await api.client.session.abort({ sessionID: task.childSessionID });
-    registry.markStatus(task.childSessionID, "cancelled");
+    registry.markStatus(task.childSessionID, "cancelled", {
+      latestEvent: "killed by user",
+    });
     api.ui?.toast?.({
       variant: "info",
       title: "bg-control",
@@ -224,19 +247,34 @@ export async function deliverBgResult(
   task: ActiveTask,
 ): Promise<void> {
   const { api, logger } = ctx;
-  if (!task.parentSessionID) {
-    logger?.warn("deliverBgResult: no parent session, skipping", {
-      child: task.childSessionID,
+  const deliveryTask = resolveDeliveryTask(ctx.registry, task);
+  if (deliveryTask.delivered) {
+    logger?.info("deliverBgResult: already delivered, skipping", {
+      child: deliveryTask.childSessionID,
+      parent: deliveryTask.parentSessionID,
     });
     return;
   }
 
+  if (!deliveryTask.parentSessionID) {
+    logger?.warn("deliverBgResult: no parent session, skipping", {
+      child: deliveryTask.childSessionID,
+    });
+    return;
+  }
+
+  ctx.registry.markStatus(deliveryTask.childSessionID, deliveryTask.status, {
+    delivered: true,
+    latestEvent: "delivery claimed",
+    detailRef: `child session/logs: ${deliveryTask.childSessionID}`,
+  });
+
   // Fetch final messages from the child
-  let resultText = `Subagent **${task.agent}** completed.`;
+  let resultText = `Subagent **${deliveryTask.agent}** completed.`;
   try {
     // SDK v2 flat signature: { sessionID }
     const msgs = await api.client.session.messages({
-      sessionID: task.childSessionID,
+      sessionID: deliveryTask.childSessionID,
     });
     // SDK can return either an array directly or { data: [...] }; normalise.
     // Previously we used spread which crashed when msgs was a non-iterable
@@ -260,7 +298,7 @@ export async function deliverBgResult(
       }
     }
     logger?.info("deliverBgResult: extracted result", {
-      child: task.childSessionID,
+      child: deliveryTask.childSessionID,
       message_count: messages.length,
       result_len: resultText.length,
     });
@@ -272,33 +310,52 @@ export async function deliverBgResult(
 
   // Inject to parent via noReply
   try {
-    const description = task.description ? ` — ${task.description}` : "";
-    const formatted = [
-      `**[${task.agent}]**${description} · ✓ done`,
-      "",
+    const formatted = formatCompactAgentDelivery({
+      taskId: deliveryTask.childSessionID,
+      agent: deliveryTask.agent,
+      status: "completed",
       resultText,
-    ].join("\n");
+      reference: `child session/logs: ${deliveryTask.childSessionID}`,
+      ...(deliveryTask.description ? { description: deliveryTask.description } : {}),
+    });
 
     // SDK v2: flat { sessionID, noReply, parts }
     await api.client.session.prompt({
-      sessionID: task.parentSessionID,
+      sessionID: deliveryTask.parentSessionID,
       noReply: true,
       parts: [{ type: "text", text: formatted }],
     });
 
     logger?.info("deliverBgResult: result delivered to parent", {
-      parent: task.parentSessionID,
-      agent: task.agent,
+      parent: deliveryTask.parentSessionID,
+      agent: deliveryTask.agent,
+    });
+    ctx.registry.markStatus(deliveryTask.childSessionID, "done", {
+      delivered: true,
+      latestEvent: "result delivered",
+      detailRef: `child session/logs: ${deliveryTask.childSessionID}`,
     });
 
     api.ui?.toast?.({
       variant: "success",
       title: "bg-control",
-      message: `${task.agent} done · result delivered`,
+      message: `${deliveryTask.agent} done · result delivered`,
     });
   } catch (err) {
+    ctx.registry.markStatus(deliveryTask.childSessionID, deliveryTask.status, {
+      delivered: false,
+      latestEvent: "delivery failed; retry pending",
+      detailRef: `child session/logs: ${deliveryTask.childSessionID}`,
+    });
     logger?.warn("deliverBgResult: delivery failed", {
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+function resolveDeliveryTask(registry: TaskRegistry, task: ActiveTask): ActiveTask {
+  if (task.newChildSessionID) {
+    return registry.getTask(task.newChildSessionID) ?? task;
+  }
+  return registry.getTask(task.childSessionID) ?? task;
 }
