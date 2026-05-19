@@ -18,6 +18,8 @@ export * from "./picker/index.js";
 export * from "./invoker/index.js";
 export * from "./obs/index.js";
 export * from "./cli/index.js";
+export * from "./delivery-format.js";
+export * from "./activity-projection.js";
 
 // Phase 7.5: file-routing logger (overrides the obs-layer createLogger export).
 // Must come AFTER obs/index so the named export here takes precedence.
