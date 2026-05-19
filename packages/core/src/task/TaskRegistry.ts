@@ -26,6 +26,7 @@ export interface TaskState {
   readonly status: TaskStatus;
   readonly meta: Readonly<Record<string, unknown>>;
   readonly started_at: number;
+  readonly updated_at: number;
   readonly completed_at?: number;
   readonly result?: unknown;
   readonly error?: { readonly message: string; readonly stack?: string };
@@ -157,6 +158,7 @@ export class TaskRegistry {
         status: "running",
         meta,
         started_at,
+        updated_at: started_at,
       },
       abort,
       resolve,
@@ -171,6 +173,13 @@ export class TaskRegistry {
 
     const progress: ProgressFn = (message) => {
       const ts = Date.now();
+      const rec = this.#tasks.get(id);
+      if (rec !== undefined) {
+        rec.state = {
+          ...rec.state,
+          updated_at: ts,
+        };
+      }
       this.#emitter.emit(PROGRESS_EVENT, id, {
         task_id: id,
         message,
@@ -198,7 +207,10 @@ export class TaskRegistry {
   }
 
   get(id: TaskId): TaskState | undefined {
-    return this.#tasks.get(id)?.state;
+    const rec = this.#tasks.get(id);
+    if (rec === undefined) return undefined;
+    rec.state = this.#normalizeFreshness(rec.state);
+    return rec.state;
   }
 
   list(filter: TaskListFilter = {}): readonly TaskState[] {
@@ -207,6 +219,7 @@ export class TaskRegistry {
       if (filter.status !== undefined && rec.state.status !== filter.status) {
         continue;
       }
+      rec.state = this.#normalizeFreshness(rec.state);
       out.push(rec.state);
     }
     return out;
@@ -234,6 +247,7 @@ export class TaskRegistry {
     const next: TaskState = {
       ...rec.state,
       status: "killed",
+      updated_at: ts,
       completed_at: ts,
     };
     rec.state = next;
@@ -322,6 +336,7 @@ export class TaskRegistry {
     rec.state = {
       ...rec.state,
       status: "completed",
+      updated_at: ts,
       completed_at: ts,
       result: value,
     };
@@ -368,6 +383,7 @@ export class TaskRegistry {
     rec.state = {
       ...rec.state,
       status: "error",
+      updated_at: ts,
       completed_at: ts,
       error,
     };
@@ -400,5 +416,13 @@ export class TaskRegistry {
     // Fire-and-forget: swallow history errors so registry semantics are
     // independent of disk availability.
     void this.#history.append(evt).catch(() => undefined);
+  }
+
+  #normalizeFreshness(state: TaskState): TaskState {
+    if (typeof state.updated_at === "number") return state;
+    return {
+      ...state,
+      updated_at: state.started_at,
+    };
   }
 }

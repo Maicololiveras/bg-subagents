@@ -18,11 +18,13 @@ import {
 } from "../format.js";
 
 function makeState(overrides: Partial<TaskState> = {}): TaskState {
+  const startedAt = overrides.started_at ?? Date.now() - 10_000;
   const base: TaskState = {
     id: "tsk_abc123def456" as TaskState["id"],
     status: "running",
     meta: { agent: "code-researcher" },
-    started_at: Date.now() - 10_000,
+    started_at: startedAt,
+    updated_at: overrides.updated_at ?? startedAt,
     ...overrides,
   };
   return base;
