@@ -16,7 +16,7 @@
  * Spec: openspec/changes/opencode-plan-review-live-control/specs/delivery/spec.md
  */
 
-import type { CompletionEvent, Logger, TaskRegistry } from "@maicolextic/bg-subagents-core";
+import { formatCompactAgentDelivery, type CompletionEvent, type Logger, type TaskRegistry } from "@maicolextic/bg-subagents-core";
 
 // Minimal OpencodeClient shape that this module uses — avoids coupling to
 // the full v1 SDK type (which pulls generic heavy types through pnpm store).
@@ -60,13 +60,17 @@ export interface V14DeliveryCoordinator {
 const DEFAULT_ACK_TIMEOUT_MS = 2_000;
 
 function formatCompletionText(event: CompletionEvent): string {
-  if (event.status === "error") {
-    const errMsg =
-      (event as unknown as { error_message?: string }).error_message ??
-      "unknown error";
-    return `[bg-subagents] Task ${event.task_id} errored: ${errMsg}`;
-  }
-  return `[bg-subagents] Task ${event.task_id} completed.`;
+  const result = (event as unknown as { result?: { result_text?: string; error?: string } }).result;
+  const error =
+    (event as unknown as { error_message?: string }).error_message ??
+    event.error?.message ??
+    result?.error;
+  return formatCompactAgentDelivery({
+    taskId: String(event.task_id),
+    status: event.status,
+    ...(result?.result_text !== undefined ? { resultText: result.result_text } : {}),
+    ...(error !== undefined ? { error } : {}),
+  });
 }
 
 export function createV14Delivery(
@@ -77,12 +81,16 @@ export function createV14Delivery(
 
   /**
    * Resolve the sessionID to post into:
-   *   1. Task's `meta.session_id` (set by tool-register at execute time — the
+   *   1. Task's `meta.delivery_session_id` / `meta.session_id` (set by tool-register at execute time — the
    *      authoritative real session), OR
    *   2. `opts.sessionID` (fallback, usually a boot-time placeholder).
    */
   function resolveSessionID(taskId: string): string {
     const state = registry.get(taskId as Parameters<typeof registry.get>[0]);
+    const deliverySessionId = state?.meta["delivery_session_id"];
+    if (typeof deliverySessionId === "string" && deliverySessionId.length > 0) {
+      return deliverySessionId;
+    }
     const metaSessionId = state?.meta["session_id"];
     if (typeof metaSessionId === "string" && metaSessionId.length > 0) {
       return metaSessionId;
@@ -93,24 +101,14 @@ export function createV14Delivery(
   async function onComplete(event: CompletionEvent): Promise<void> {
     const taskId = event.task_id;
 
-    // Dedupe: if another channel / prior call already delivered this
-    // task, skip. We pre-check via markDelivered, but rollback if we
-    // decide not to deliver. Actual `markDelivered` set happens AFTER
-    // primary succeeds — that way a primary failure leaves the id
-    // unmarked so a higher-level fallback coordinator can retry via
-    // an alternate surface.
-    //
-    // Concurrent onComplete calls within THIS coordinator are deduped
-    // by the local `pending` set.
-
     if (pending.has(taskId)) {
       logger?.info?.("delivery:already-in-flight", { task_id: taskId });
       return;
     }
 
-    // Pre-check via non-mutating peek. If another path already delivered
-    // (or a prior onComplete of the same id), skip.
-    if (registry.isDelivered(taskId)) {
+    // Atomic single-delivery claim. Mark BEFORE posting so two delivery
+    // surfaces cannot both call noReply for the same completion.
+    if (!registry.markDelivered(taskId)) {
       logger?.info?.("delivery:already-delivered", { task_id: taskId });
       return;
     }
@@ -135,18 +133,11 @@ export function createV14Delivery(
 
     try {
       await client.session.prompt(payload);
-      // Success — mark delivered to dedupe against other channels.
-      const firstDelivery = registry.markDelivered(taskId);
-      if (firstDelivery) {
-        logger?.info?.("delivery:primary-delivered", { task_id: taskId });
-      } else {
-        logger?.info?.("delivery:primary-delivered-lost-race", {
-          task_id: taskId,
-        });
-      }
+      logger?.info?.("delivery:primary-delivered", { task_id: taskId });
     } catch (err) {
-      // Primary failed — log warn. Leave the id UNMARKED so a higher-
-      // level fallback can still retry via an alternate surface.
+      // Primary failed after this coordinator claimed delivery. Keep the id
+      // marked to preserve the single-noReply guarantee; recovery should be
+      // explicit instead of a competing blind fallback.
       logger?.warn?.("delivery:primary-failed", {
         task_id: taskId,
         error: err instanceof Error ? err.message : String(err),
