@@ -194,6 +194,46 @@ Returns data object to TUI host for rendering
 (Phase v1.1: upgrades to real SolidJS JSX component via @opentui/solid)
 ```
 
+## Clean transcript + activity box boundary (PR1-PR5)
+
+The clean transcript contract is now explicit and shared across core/control-tui/opencode consumers:
+
+- Main transcript default: **user turns + assistant final answers + compact activity refs only**.
+- Internal runtime activity is represented as projected activity boxes/cards.
+- Raw chain-of-thought, raw stdout, full logs, and full child transcript payloads are not emitted by default.
+
+Core view-model architecture:
+
+- `AgentActivityProjection` is the canonical shaping seam.
+- `ActivityBoxVM` is the compact, transcript/sidebar-safe card contract.
+- `DetailVM` is bounded inspect/focus detail (windowed signals + compact previews + refs).
+- `TranscriptSummaryVM` is compact host-delivery summary output when host delivery is required.
+
+Consumer split (intentional):
+
+- `packages/control-tui` is the canonical richer interaction model (FG/BG parity, inspect/expand behavior).
+- `packages/opencode/src/tui-plugin/*` is a lightweight projection consumer, not a divergent model.
+
+Policy gate contract:
+
+- `inspect`, `focus`, `enter`: read-only defaults enabled.
+- `kill`, `cancel`, `move-to-BG`: side-effectful and policy-gated.
+- Side-effect actions are revalidated at execution time in host/runtime paths.
+
+Host seam limit:
+
+- Full transcript suppression/replacement is constrained by current OpenCode plugin seams.
+- Where full suppression is not supported, bounded `TranscriptSummaryVM`-style summaries are used instead of raw internals.
+
+PR5 verification/docs status:
+
+- Verification suites for core projection, bounded output, v14 delivery, control-tui parity/actions, and opencode plugin consumer/policy tests are passing in the PR5 verification slice.
+- Focused suites run in PR5: core `activity-projection`, core `delivery-format`, opencode v14 `delivery`, control-tui `task-ui/events/orchestrator-activity/actions`, and opencode tui-plugin `sidebar/keybinds/index/shared-state`.
+- Real visual smoke remains intentionally deferred until host blockers are resolved:
+  - OpenCode auth 401 during end-to-end host runs.
+  - Plugin loadout mismatch/wrong plugin loaded in some local runs.
+  - Potential stale/zombie active task card (`active sdd-apply 898m58`) observed in UI despite no live delegation/process from inspection; tracked as smoke follow-up.
+
 ---
 
 ## Component responsibilities
