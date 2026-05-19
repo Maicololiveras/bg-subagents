@@ -37,6 +37,7 @@ import { createTaskPolicyStore } from "../../host-compat/v14/slash-commands.js";
 // ---------------------------------------------------------------------------
 
 import { registerKeybinds } from "../../tui-plugin/keybinds.js";
+import { isActionEnabledByPolicy } from "../../tui-plugin/keybinds.js";
 
 // ---------------------------------------------------------------------------
 // Minimal mock of TuiPluginApi surface required by keybinds
@@ -62,6 +63,7 @@ type MockToast = {
 
 type MockUiApi = {
   toast: ReturnType<typeof vi.fn>;
+  DialogSelect: ReturnType<typeof vi.fn>;
   dialog: {
     replace: ReturnType<typeof vi.fn>;
     clear: ReturnType<typeof vi.fn>;
@@ -82,6 +84,7 @@ function makeApi(): MockTuiPluginApi {
     },
     ui: {
       toast: vi.fn(),
+      DialogSelect: vi.fn((input) => input),
       dialog: {
         replace: vi.fn(),
         clear: vi.fn(),
@@ -102,11 +105,13 @@ function makeSharedState(registry?: TaskRegistry) {
 
 beforeEach(() => {
   clearSharedState();
+  vi.useFakeTimers();
   delete process.env["BG_SUBAGENTS_DEBUG"];
 });
 
 afterEach(() => {
   clearSharedState();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -191,6 +196,52 @@ describe("registerKeybinds — command array shape", () => {
       expect(typeof cmd.value).toBe("string");
       expect(cmd.value.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("isActionEnabledByPolicy", () => {
+  it("enables inspect/focus/enter by default", () => {
+    const row = {
+      id: "task-1",
+      agentName: "sdd-apply",
+      mode: "bg",
+      status: "running",
+      elapsedMs: 100,
+    };
+
+    expect(isActionEnabledByPolicy(row as never, "inspect")).toBe(true);
+    expect(isActionEnabledByPolicy(row as never, "focus")).toBe(true);
+    expect(isActionEnabledByPolicy(row as never, "enter")).toBe(true);
+  });
+
+  it("disables side effects by default", () => {
+    const row = {
+      id: "task-1",
+      agentName: "sdd-apply",
+      mode: "fg",
+      status: "running",
+      elapsedMs: 100,
+      actions: { kill: true, cancel: true, "move-to-BG": true },
+    };
+
+    expect(isActionEnabledByPolicy(row as never, "kill")).toBe(false);
+    expect(isActionEnabledByPolicy(row as never, "cancel")).toBe(false);
+    expect(isActionEnabledByPolicy(row as never, "move-to-BG")).toBe(false);
+  });
+
+  it("allows side effects only when policy flag allows", () => {
+    const row = {
+      id: "task-1",
+      agentName: "sdd-apply",
+      mode: "fg",
+      status: "running",
+      elapsedMs: 100,
+      actions: { kill: true, cancel: true, "move-to-BG": true },
+    };
+
+    expect(isActionEnabledByPolicy(row as never, "kill", true)).toBe(true);
+    expect(isActionEnabledByPolicy(row as never, "cancel", true)).toBe(true);
+    expect(isActionEnabledByPolicy(row as never, "move-to-BG", true)).toBe(true);
   });
 });
 
@@ -547,6 +598,88 @@ describe("registerKeybinds — down (Open task panel)", () => {
     ];
     expect(typeof renderFn).toBe("function");
     expect(typeof onClose).toBe("function");
+  });
+
+  it("stale tasks stay visible in all-tasks panel for inspection", () => {
+    const registry = new TaskRegistry();
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h1 = registry.spawn({
+      meta: { agent_name: "sdd-explore", mode: "bg" },
+      run: (_signal) => new Promise(() => undefined),
+    });
+    h1.done.catch(() => undefined);
+    registerFromServer(makeSharedState(registry));
+
+    vi.setSystemTime(11 * 60 * 1000);
+
+    const api = makeApi();
+    const cmds = getCommands(api);
+    vi.setSystemTime(11 * 60 * 1000);
+    cmds[2]!.onSelect!();
+
+    const [renderFn] = api.ui.dialog.replace.mock.calls[0] as [() => unknown, () => void];
+    renderFn();
+    const args = api.ui.DialogSelect.mock.calls[0]![0] as { options: Array<{ title: string }> };
+    expect(args.options.some((o) => o.title.includes("stale"))).toBe(true);
+
+    vi.useRealTimers();
+  });
+});
+
+describe("registerKeybinds — stale rows excluded from active focus", () => {
+  function getCommands(api: MockTuiPluginApi): MockTuiCommand[] {
+    registerKeybinds(api as never);
+    const [cb] = api.command.register.mock.calls[0] as [() => MockTuiCommand[]];
+    return cb();
+  }
+
+  it("ctrl+b excludes stale BG rows from focus list", () => {
+    const registry = new TaskRegistry();
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h1 = registry.spawn({
+      meta: { agent_name: "sdd-explore", mode: "bg" },
+      run: (_signal) => new Promise(() => undefined),
+    });
+    h1.done.catch(() => undefined);
+    registerFromServer(makeSharedState(registry));
+    vi.setSystemTime(11 * 60 * 1000);
+
+    const api = makeApi();
+    const cmds = getCommands(api);
+    vi.setSystemTime(11 * 60 * 1000);
+    cmds[0]!.onSelect!();
+
+    const toastArg = api.ui.toast.mock.calls[0]![0] as MockToast;
+    expect(toastArg.message).toBe("No background tasks running");
+    expect(api.ui.dialog.replace).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("ctrl+f excludes stale FG rows from focus list", () => {
+    const registry = new TaskRegistry();
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const h1 = registry.spawn({
+      meta: { agent_name: "sdd-apply", mode: "fg" },
+      run: (_signal) => new Promise(() => undefined),
+    });
+    h1.done.catch(() => undefined);
+    registerFromServer(makeSharedState(registry));
+    vi.setSystemTime(11 * 60 * 1000);
+
+    const api = makeApi();
+    const cmds = getCommands(api);
+    vi.setSystemTime(11 * 60 * 1000);
+    cmds[1]!.onSelect!();
+
+    const toastArg = api.ui.toast.mock.calls[0]![0] as MockToast;
+    expect(toastArg.message).toBe("No foreground tasks running");
+    expect(api.ui.dialog.replace).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
   });
 });
 
