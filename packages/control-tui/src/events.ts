@@ -20,6 +20,7 @@
  */
 
 import { createSignal, type Accessor, type Setter } from "solid-js";
+import type { AgentActivitySource } from "@maicolextic/bg-subagents-core";
 
 export interface ActiveTask {
   readonly childSessionID: string;
@@ -27,22 +28,34 @@ export interface ActiveTask {
   readonly agent: string;
   readonly started: number;
   readonly status:
+    | "queued"
     | "running"
     | "done"
     | "error"
     | "cancelled"
     | "bg-detached";
+  readonly mode?: "BG" | "FG";
   readonly prompt?: string;
   readonly description?: string;
+  readonly latestEvent?: string;
+  readonly progressEvents?: readonly string[];
+  readonly summary?: string;
+  readonly updatedAt?: number;
+  readonly delivered?: boolean;
+  readonly detailRef?: string;
   readonly newChildSessionID?: string; // when moved to BG, the replacement
   readonly endedAt?: number;
   readonly errorMessage?: string;
 }
 
+const MAX_PROGRESS_EVENTS = 20;
+
 export interface TaskRegistry {
   readonly tasks: Accessor<readonly ActiveTask[]>;
   readonly setTasks: Setter<ActiveTask[]>;
   readonly getTask: (childSessionID: string) => ActiveTask | undefined;
+  readonly getTaskByOriginalChild: (childSessionID: string) => ActiveTask | undefined;
+  readonly getTaskByReplacementChild: (newChildSessionID: string) => ActiveTask | undefined;
   readonly upsertTask: (task: ActiveTask) => void;
   readonly markStatus: (
     childSessionID: string,
@@ -55,28 +68,50 @@ export interface TaskRegistry {
 export function createTaskRegistry(): TaskRegistry {
   const [tasks, setTasks] = createSignal<ActiveTask[]>([]);
 
+  const getTaskByOriginalChild = (id: string) =>
+    tasks().find((t) => t.childSessionID === id);
+
+  const getTaskByReplacementChild = (id: string) =>
+    tasks().find((t) => t.newChildSessionID === id);
+
   const getTask = (id: string) =>
-    tasks().find((t) => t.childSessionID === id || t.newChildSessionID === id);
+    getTaskByOriginalChild(id) ?? getTaskByReplacementChild(id);
 
   const upsertTask = (task: ActiveTask) => {
+    const progressEvents = task.progressEvents ?? (task.latestEvent ? [task.latestEvent] : []);
+    const incoming = { updatedAt: Date.now(), ...task, progressEvents: boundProgressEvents(progressEvents) };
     setTasks((prev) => {
-      const existing = prev.findIndex((t) => t.childSessionID === task.childSessionID);
+      const existing = prev.findIndex((t) => t.childSessionID === incoming.childSessionID);
       if (existing >= 0) {
         const next = prev.slice();
-        next[existing] = { ...prev[existing], ...task };
+        next[existing] = { ...prev[existing], ...incoming };
         return next;
       }
-      return [...prev, task];
+      return [...prev, incoming];
     });
   };
 
   const markStatus: TaskRegistry["markStatus"] = (id, status, extra) => {
+    const now = Date.now();
+    const isTerminal = status !== "running" && status !== "queued";
     setTasks((prev) =>
-      prev.map((t) =>
-        t.childSessionID === id || t.newChildSessionID === id
-          ? { ...t, status, endedAt: Date.now(), ...extra }
-          : t,
-      ),
+      prev.map((t) => {
+        const target = findTaskByPrecedence(prev, id);
+        if (!target || t.childSessionID !== target.childSessionID) return t;
+        const eventText = compactTaskSignal(extra?.latestEvent ?? extra?.summary);
+        const next = {
+          ...t,
+          status,
+          ...(isTerminal ? { endedAt: now } : {}),
+          updatedAt: now,
+          ...extra,
+          progressEvents: appendProgressEvent(t.progressEvents, eventText),
+        };
+        if (!isTerminal) return next;
+        const { latestEvent: _latestEvent, ...terminalTask } = next;
+        void _latestEvent;
+        return terminalTask;
+      }),
     );
   };
 
@@ -86,7 +121,51 @@ export function createTaskRegistry(): TaskRegistry {
     );
   };
 
-  return { tasks, setTasks, getTask, upsertTask, markStatus, removeTask };
+  return { tasks, setTasks, getTask, getTaskByOriginalChild, getTaskByReplacementChild, upsertTask, markStatus, removeTask };
+}
+
+function findTaskByPrecedence(tasks: readonly ActiveTask[], id: string): ActiveTask | undefined {
+  return tasks.find((t) => t.childSessionID === id) ?? tasks.find((t) => t.newChildSessionID === id);
+}
+
+function boundProgressEvents(events: readonly string[]): readonly string[] {
+  return events.slice(-MAX_PROGRESS_EVENTS);
+}
+
+function appendProgressEvent(events: readonly string[] | undefined, event: string | undefined): readonly string[] {
+  if (!event) return boundProgressEvents(events ?? []);
+  return boundProgressEvents([...(events ?? []), event]);
+}
+
+export function compactTaskSignal(value: unknown, maxLength = 96): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return undefined;
+  return compact.length > maxLength ? `${compact.slice(0, Math.max(0, maxLength - 1))}…` : compact;
+}
+
+export function toActivitySource(task: ActiveTask): AgentActivitySource {
+  return {
+    source: "control-active-task",
+    id: `task:${task.childSessionID}`,
+    taskId: task.childSessionID,
+    childSessionId: task.newChildSessionID ?? task.childSessionID,
+    agentName: task.agent,
+    status: task.status,
+    startedAt: task.started,
+    ...(task.parentSessionID != null ? { parentSessionId: task.parentSessionID } : {}),
+    ...(task.mode !== undefined ? { mode: task.mode } : {}),
+    ...(task.updatedAt !== undefined ? { updatedAt: task.updatedAt } : {}),
+    ...(task.endedAt !== undefined ? { endedAt: task.endedAt } : {}),
+    ...(task.prompt !== undefined ? { prompt: task.prompt } : {}),
+    ...(task.description !== undefined ? { description: task.description } : {}),
+    ...(task.latestEvent !== undefined ? { latestSignal: task.latestEvent } : {}),
+    ...(task.progressEvents !== undefined ? { progressSignals: task.progressEvents } : {}),
+    ...(task.summary !== undefined ? { resultPreview: task.summary } : {}),
+    ...(task.errorMessage !== undefined ? { errorPreview: task.errorMessage } : {}),
+    ...(task.detailRef !== undefined ? { detailRef: task.detailRef } : {}),
+    ...(task.delivered !== undefined ? { delivered: task.delivered } : {}),
+  };
 }
 
 export interface EventSubscriptionOpts {
@@ -159,6 +238,19 @@ function extractError(e: any): string | undefined {
   return undefined;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractProgressSignal(e: any): string | undefined {
+  const props = e?.properties ?? e;
+  const part = props?.part ?? e?.part;
+  return compactTaskSignal(
+    part?.text ?? props?.text ?? props?.delta ?? props?.message ?? props?.summary,
+  );
+}
+
+function isTaskStatus(status: string | undefined): status is ActiveTask["status"] {
+  return status === "queued" || status === "running" || status === "done" || status === "error" || status === "cancelled" || status === "bg-detached";
+}
+
 export function subscribeToSessionEvents(
   opts: EventSubscriptionOpts,
 ): () => void {
@@ -204,6 +296,11 @@ export function subscribeToSessionEvents(
         agent,
         started: Date.now(),
         status: "running",
+        mode: "FG",
+        latestEvent: "session created",
+        progressEvents: ["session created"],
+        updatedAt: Date.now(),
+        detailRef: `child session/logs: ${sess.id}`,
         ...(sess.title ? { description: sess.title } : {}),
       };
       registry.upsertTask(newTask);
@@ -240,7 +337,7 @@ export function subscribeToSessionEvents(
         child: sessionID,
         agent: task.agent,
       });
-      registry.markStatus(sessionID, "done");
+      registry.markStatus(sessionID, "done", { summary: "session idle", latestEvent: "session idle" });
       void onChildIdle?.(task);
     },
   );
@@ -260,9 +357,38 @@ export function subscribeToSessionEvents(
         agent: task.agent,
         error: errMsg,
       });
+      const compactError = compactTaskSignal(errMsg);
       registry.markStatus(sessionID, "error", {
-        ...(errMsg ? { errorMessage: errMsg } : {}),
+        latestEvent: compactError ?? "session error",
+        summary: compactError ?? "session error",
+        ...(compactError ? { errorMessage: compactError } : {}),
       });
+    },
+  );
+
+  const disposeStatus = api.event.on(
+    "session.status",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (e: any) => {
+      const sessionID = extractSessionID(e);
+      const status = e?.properties?.status ?? e?.status;
+      if (!sessionID || !isTaskStatus(status)) return;
+      const task = registry.getTask(sessionID);
+      if (!task) return;
+      registry.markStatus(sessionID, status, { latestEvent: `status: ${status}` });
+    },
+  );
+
+  const disposePartUpdated = api.event.on(
+    "message.part.updated",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (e: any) => {
+      const sessionID = extractSessionID(e);
+      if (!sessionID) return;
+      const task = registry.getTask(sessionID);
+      if (!task) return;
+      const latestEvent = extractProgressSignal(e) ?? "progress update";
+      registry.markStatus(sessionID, task.status, { latestEvent });
     },
   );
 
@@ -270,5 +396,7 @@ export function subscribeToSessionEvents(
     disposeCreated?.();
     disposeIdle?.();
     disposeError?.();
+    disposeStatus?.();
+    disposePartUpdated?.();
   };
 }
