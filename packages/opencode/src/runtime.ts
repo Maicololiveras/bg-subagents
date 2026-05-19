@@ -19,14 +19,13 @@
  *       │   └─ return { task_id, status: "running" } INMEDIATO
  *       │
  *       └─ On child exit:
- *           └─ client.session.prompt({sessionID: parent, noReply: true,
- *                                     parts: [{type: "text", text: result}]})
+ *           └─ registry completion event → v14 delivery coordinator posts noReply
  *
  * Key advantages over v1.0 architecture:
  *   - Bypass tool-intercept hooks (broken in 1.14.28)
  *   - True parallelism (multiple OS processes, not Node fibers)
  *   - Zero shared state with parent → zero blocking
- *   - Result delivery via noReply (proven to work in delivery.ts)
+ *   - Single delivery owner: v14 delivery coordinator posts noReply after completion
  *   - Cancellation via SIGTERM
  *   - --pure flag prevents recursive plugin loading
  *
@@ -58,6 +57,7 @@ export interface SubagentRunResult {
   readonly task_id: string;
   readonly child_pid: number;
   readonly child_session_id?: string;
+  readonly parent_session_id?: string;
   readonly mode: "process-spawn";
   readonly exit_code?: number;
   readonly result_text?: string;
@@ -66,7 +66,7 @@ export interface SubagentRunResult {
 
 export interface SubagentRunnerOpts {
   readonly client: SubagentDeliveryClient;
-  /** Override the opencode binary path (default: "opencode" via PATH). */
+  /** Override the opencode binary path (default: env/BG_SUBAGENTS_OPENCODE_BINARY or "opencode" via PATH). */
   readonly opencodeBinary?: string;
   /** Override cwd for the child (default: process.cwd()). */
   readonly cwd?: string;
@@ -78,6 +78,14 @@ export interface SubagentRunnerOpts {
     warn(msg: string, fields?: Record<string, unknown>): void;
     error(msg: string, fields?: Record<string, unknown>): void;
   };
+}
+
+function resolveOpencodeBinary(explicit?: string): string {
+  const candidate = explicit ?? process.env.BG_SUBAGENTS_OPENCODE_BINARY;
+  if (candidate?.toLowerCase().endsWith(".ps1")) {
+    return `${candidate.slice(0, -4)}.cmd`;
+  }
+  return candidate ?? "opencode";
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -93,12 +101,12 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
  */
 export function createSubagentRunner(opts: SubagentRunnerOpts) {
   const {
-    client,
-    opencodeBinary = "opencode",
+    opencodeBinary: explicitOpencodeBinary,
     cwd = process.cwd(),
     timeoutMs = DEFAULT_TIMEOUT_MS,
     logger,
   } = opts;
+  const opencodeBinary = resolveOpencodeBinary(explicitOpencodeBinary);
 
   return async function runOpenCodeSubagentProcess(
     ctx: ToolContext,
@@ -217,33 +225,16 @@ export function createSubagentRunner(opts: SubagentRunnerOpts) {
         const resultText =
           code === 0 ? extractResultFromJsonStream(stdout) : null;
 
-        // Deliver to parent via noReply — even on errors (so user sees what happened).
-        if (parentSessionID) {
-          const deliveryText =
-            code === 0 && resultText !== null
-              ? formatSuccessDelivery(taskId, input, resultText)
-              : formatErrorDelivery(taskId, input, code, signalName, stderr);
-
-          client.session
-            .prompt({
-              path: { id: parentSessionID },
-              body: {
-                noReply: true,
-                parts: [{ type: "text", text: deliveryText }],
-              },
-            })
-            .catch((err: unknown) => {
-              logger?.error("subagent-process:delivery-failed", {
-                task_id: taskId,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            });
-        }
+        // Delivery is intentionally owned by the server-side v14 delivery
+        // coordinator wired to TaskRegistry completion events. Do NOT post a
+        // noReply message here; doing so competes with delivery.ts and can
+        // double-deliver completions. Keep the parent session id in metadata.
 
         resolve({
           task_id: taskId,
           child_pid: child.pid ?? -1,
           mode: "process-spawn",
+          ...(parentSessionID ? { parent_session_id: parentSessionID } : {}),
           ...(code !== null ? { exit_code: code } : {}),
           ...(resultText !== null ? { result_text: resultText } : {}),
           ...(code !== 0
@@ -277,7 +268,7 @@ export function createSubagentRunner(opts: SubagentRunnerOpts) {
 // event with type "text" parts.
 // -----------------------------------------------------------------------------
 
-function extractResultFromJsonStream(stdout: string): string | null {
+export function extractResultFromJsonStream(stdout: string): string | null {
   // Each line is a JSON object. Find the last assistant message text.
   const lines = stdout.split("\n").filter((l) => l.trim().length > 0);
   let finalText: string | null = null;
@@ -287,6 +278,17 @@ function extractResultFromJsonStream(stdout: string): string | null {
     try {
       event = JSON.parse(line) as Record<string, unknown>;
     } catch {
+      continue;
+    }
+
+    // OpenCode `run --format json` can emit text in two shapes:
+    // 1. { type: "text", part: { type: "text", text: "..." } }
+    // 2. { parts: [{ type: "text", text: "..." }] }
+    // Prefer these structured text chunks over raw NDJSON; otherwise the parent
+    // receives a weird transcript-looking blob instead of the agent's answer.
+    const singlePart = (event as { part?: Record<string, unknown> }).part;
+    if (singlePart?.["type"] === "text" && typeof singlePart["text"] === "string") {
+      finalText = singlePart["text"] as string;
       continue;
     }
 
@@ -310,35 +312,6 @@ function extractResultFromJsonStream(stdout: string): string | null {
   }
 
   return finalText;
-}
-
-function formatSuccessDelivery(
-  taskId: string,
-  input: TaskBgInput,
-  resultText: string,
-): string {
-  const description = input.description ? ` — ${input.description}` : "";
-  return `**[${input.subagent_type}]**${description}  · _${taskId}_  · ✓ done\n\n${resultText}`;
-}
-
-function formatErrorDelivery(
-  taskId: string,
-  input: TaskBgInput,
-  code: number | null,
-  signalName: NodeJS.Signals | null,
-  stderr: string,
-): string {
-  const description = input.description ? ` — ${input.description}` : "";
-  const stderrSnippet = stderr.length > 500 ? stderr.slice(0, 500) + "…" : stderr;
-  return [
-    `**[${input.subagent_type}]**${description}  · _${taskId}_  · ✗ failed`,
-    "",
-    `Exit: ${code ?? "null"} (signal: ${signalName ?? "none"})`,
-    "",
-    "```",
-    stderrSnippet || "(no stderr)",
-    "```",
-  ].join("\n");
 }
 
 // -----------------------------------------------------------------------------

@@ -94,6 +94,61 @@ describe("createV14Delivery — primary delivery", () => {
     expect(payload.body.parts[0]!.text.toLowerCase()).toContain("completed");
   });
 
+  it("includes process runner result text when available", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_v14_result",
+    });
+
+    await coord.onComplete(mkCompletion("tsk_result", "completed", { result_text: "final answer" }));
+
+    const payload = calls[0]!.args as { body: { parts: Array<{ text: string }> } };
+    expect(payload.body.parts[0]!.text).toContain("final answer");
+  });
+
+  it("does not deliver long raw result_text in full", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_v14_compact",
+    });
+    const raw = Array.from({ length: 200 }, (_, i) => `raw stdout line ${i} ${"x".repeat(40)}`).join("\n");
+
+    await coord.onComplete(mkCompletion("tsk_compact", "completed", { result_text: raw }));
+
+    const payload = calls[0]!.args as { body: { parts: Array<{ text: string }> } };
+    const delivered = payload.body.parts[0]!.text;
+    expect(delivered.length).toBeLessThan(1_800);
+    expect(delivered).toContain("Qué hizo");
+    expect(delivered).toContain("logs/history");
+    expect(delivered).not.toContain("raw stdout line 199");
+  });
+
+  it("preserves compact structured delivery contracts", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_v14_structured",
+    });
+    const structured = [
+      "status: success",
+      "executive_summary: Applied the focused fix.",
+      "next_recommended: Run verify.",
+    ].join("\n");
+
+    await coord.onComplete(mkCompletion("tsk_structured", "completed", { result_text: structured }));
+
+    const payload = calls[0]!.args as { body: { parts: Array<{ text: string }> } };
+    expect(payload.body.parts[0]!.text).toContain(structured);
+  });
+
   it("marks the task delivered after primary succeeds", async () => {
     const registry = new TaskRegistry();
     const { client } = mkClient();
@@ -206,7 +261,7 @@ describe("createV14Delivery — primary failure + fallback", () => {
     );
   });
 
-  it("does NOT mark delivered when primary rejects (so fallback can retry)", async () => {
+  it("keeps the task marked when primary rejects to prevent competing noReply", async () => {
     const registry = new TaskRegistry();
     const { client } = mkClient({
       promptImpl: async () => {
@@ -222,8 +277,7 @@ describe("createV14Delivery — primary failure + fallback", () => {
 
     await coord.onComplete(mkCompletion("tsk_retry"));
 
-    // Not yet delivered — fallback can still race in.
-    expect(registry.markDelivered(unsafeTaskId("tsk_retry"))).toBe(true);
+    expect(registry.markDelivered(unsafeTaskId("tsk_retry"))).toBe(false);
   });
 });
 
@@ -271,6 +325,37 @@ describe("createV14Delivery — dynamic sessionID from task meta (bug fix)", () 
     const payload = calls[0]!.args as { path: { id: string } };
     expect(payload.path.id).toBe("ses_REAL_FROM_TOOLCTX");
     expect(payload.path.id).not.toBe("session_unknown");
+  });
+
+  it("prefers delivery_session_id from registry task meta", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "session_unknown",
+    });
+
+    const handle = registry.spawn({
+      meta: {
+        tool: "task_bg",
+        subagent_type: "explore",
+        session_id: "ses_LEGACY",
+        delivery_session_id: "ses_DELIVERY",
+      },
+      run: async () => "ok",
+    });
+    await handle.done;
+
+    await coord.onComplete({
+      task_id: handle.id,
+      status: "completed",
+      result: "ok",
+      ts: Date.now(),
+    } as CompletionEvent);
+
+    const payload = calls[0]!.args as { path: { id: string } };
+    expect(payload.path.id).toBe("ses_DELIVERY");
   });
 
   it("falls back to opts.sessionID when task meta has no session_id (backward compat)", async () => {
@@ -382,5 +467,63 @@ describe("createV14Delivery — zero stdout pollution (Phase 7.5.7)", () => {
     await coord.onComplete(mkCompletion("tsk_fail_no_stdout"));
 
     expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("posts only compact text to the parent when result_text contains raw NDJSON and long stdout", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_compact_parent",
+      logger: mkLogger() as never,
+    });
+
+    await coord.onComplete(mkCompletion("tsk_compact_parent", "completed", {
+      result_text: [
+        JSON.stringify({ type: "message.part.updated", part: { type: "text", text: "internal token" } }),
+        JSON.stringify({ type: "session.idle", properties: { sessionID: "child-1" } }),
+        "Final compact result for parent.",
+        "stdout ".repeat(700),
+      ].join("\n"),
+    }));
+
+    expect(calls).toHaveLength(1);
+    const payload = calls[0]!.args as { body: { parts: Array<{ text: string }> } };
+    const text = payload.body.parts[0]!.text;
+    expect(text).toContain("Final compact result for parent.");
+    expect(text).toContain("Referencia:");
+    expect(text).not.toContain("message.part.updated");
+    expect(text).not.toContain("session.idle");
+    expect(text).not.toContain("stdout stdout stdout stdout stdout stdout stdout stdout stdout stdout");
+    expect(text.length).toBeLessThanOrEqual(1_600);
+  });
+
+  it("rejects reasoning-like and transcript-style payloads in parent delivery", async () => {
+    const registry = new TaskRegistry();
+    const { client, calls } = mkClient();
+    const coord = createV14Delivery({
+      registry,
+      client,
+      sessionID: "sess_reasoning_filter",
+      logger: mkLogger() as never,
+    });
+
+    await coord.onComplete(mkCompletion("tsk_reasoning_filter", "completed", {
+      result_text: [
+        "<thinking>private chain of thought</thinking>",
+        "Reasoning: private trajectory",
+        "Assistant: should not surface full transcript",
+        "Visible summary line",
+      ].join("\n"),
+    }));
+
+    const payload = calls[0]!.args as { body: { parts: Array<{ text: string }> } };
+    const text = payload.body.parts[0]!.text;
+
+    expect(text).toContain("Visible summary line");
+    expect(text).not.toContain("<thinking>");
+    expect(text).not.toContain("Reasoning:");
+    expect(text).not.toContain("Assistant: should not surface");
   });
 });
