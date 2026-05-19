@@ -2,8 +2,8 @@ schema: spec-driven
 
 context: |
   Stack: TypeScript 5.7.3, Node >=22, pnpm 9.15.9 workspaces (monorepo)
-  Packages: 3 published (@maicolextic/bg-subagents-{protocol,core,opencode})
-  Architecture: Plugin/adapter pattern — protocol (contracts) → core (pure domain) → opencode (host adapter)
+  Packages: protocol, core, opencode, control-tui under @maicolextic/bg-subagents-*
+  Architecture: Plugin/adapter pattern — protocol contracts → core domain → OpenCode adapters/TUI
   Testing: Vitest 2.1.8 (432 tests gate, run via `pnpm -r run test`)
   Releases: Changesets + GitHub Actions release.yml with OIDC Trusted Publishing
   Style: Conventional commits (fix:, feat:, chore:, docs:); branches `fix/|feat/|chore/...`
@@ -13,7 +13,7 @@ context: |
 rules:
   proposal:
     - Include rollback plan for risky changes
-    - Identify affected packages (protocol/core/opencode/scripts)
+    - Identify affected packages (protocol/core/opencode/control-tui/scripts)
     - Consider host API version compatibility (legacy + OpenCode 1.14+)
   specs:
     - Use Given/When/Then format for scenarios

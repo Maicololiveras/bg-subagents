@@ -41,11 +41,23 @@ import { createLogger } from "@maicolextic/bg-subagents-core";
 import type { TaskState } from "@maicolextic/bg-subagents-core";
 import { current } from "./shared-state.js";
 
+type ActivityAction = "inspect" | "focus" | "enter" | "kill" | "cancel" | "move-to-BG";
+
 // ---------------------------------------------------------------------------
 // Logger — file-routed, zero stdout in production
 // ---------------------------------------------------------------------------
 
 const log = createLogger("tui-plugin:sidebar");
+
+function stringMeta(meta: Readonly<Record<string, unknown>>, key: string): string | undefined {
+  const value = meta[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function mapMode(rawMode: unknown): "bg" | "fg" {
+  if (rawMode === "fg" || rawMode === "foreground") return "fg";
+  return "bg";
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,8 +70,8 @@ export interface SidebarTaskRow {
   agentName: string;
   /** Execution mode from task meta. Defaults to "bg" when absent. */
   mode: "bg" | "fg";
-  /** Simplified status: "running" | "done" | "failed". */
-  status: "running" | "done" | "failed";
+  /** Simplified status with freshness warnings. */
+  status: "running" | "stale" | "maybe-unknown" | "done" | "failed";
   /**
    * For running tasks: nowMs - started_at.
    * For terminal tasks: completed_at - started_at (fixed at finish time).
@@ -70,6 +82,11 @@ export interface SidebarTaskRow {
    * Used for sorting terminal tasks most-recently-finished first.
    */
   finishedAtMs?: number;
+  /** Last known activity timestamp used for freshness checks. */
+  lastSeenAtMs?: number;
+  /** Age in ms when row is stale/maybe-unknown. */
+  staleAgeMs?: number;
+  actions?: Readonly<Record<ActivityAction, boolean>>;
 }
 
 export interface SidebarData {
@@ -80,6 +97,12 @@ export interface BuildSidebarOptions {
   /** Polling interval in ms. Default: 1000. */
   pollIntervalMs?: number;
 }
+
+export interface SidebarFreshnessOptions {
+  readonly staleAfterMs?: number;
+}
+
+export const DEFAULT_SIDEBAR_STALE_AFTER_MS = 10 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Minimal SlotPlugin structural interface
@@ -136,7 +159,10 @@ function mapStatus(taskStatus: string): SidebarStatus {
  * @param nowMs - Current timestamp in ms. Defaults to Date.now(). Injected for
  *                testability — production code passes no argument.
  */
-export function getSidebarData(nowMs: number = Date.now()): SidebarData {
+export function getSidebarData(
+  nowMs: number = Date.now(),
+  options?: SidebarFreshnessOptions,
+): SidebarData {
   const state = current();
 
   if (state === undefined) {
@@ -150,16 +176,35 @@ export function getSidebarData(nowMs: number = Date.now()): SidebarData {
     return { tasks: [] };
   }
 
+  const staleAfterMs = options?.staleAfterMs ?? DEFAULT_SIDEBAR_STALE_AFTER_MS;
+
   const rows: SidebarTaskRow[] = allTasks.map((task: TaskState) => {
     const agentName =
-      typeof task.meta["agent_name"] === "string" ? task.meta["agent_name"] : "";
+      stringMeta(task.meta, "agent_name") ??
+      stringMeta(task.meta, "agent") ??
+      stringMeta(task.meta, "subagent_type") ??
+      "";
 
-    const rawMode = task.meta["mode"];
-    const mode: "bg" | "fg" = rawMode === "fg" ? "fg" : "bg";
+    const mode = mapMode(task.meta["mode"]);
 
-    const status = mapStatus(task.status);
+    const mappedStatus = mapStatus(task.status);
+    const freshness = task as TaskState & { readonly updated_at?: number };
+    const lastSeenAtMs = freshness.updated_at ?? task.started_at;
+    const staleAgeMs = Math.max(0, nowMs - lastSeenAtMs);
+    const delivered = state.registry.isDelivered(task.id);
 
-    const isTerminal = status !== "running";
+    let status: SidebarStatus;
+    if (mappedStatus !== "running") {
+      status = mappedStatus;
+    } else if (delivered) {
+      status = "done";
+    } else if (staleAgeMs >= staleAfterMs) {
+      status = "stale";
+    } else {
+      status = "running";
+    }
+
+    const isTerminal = status === "done" || status === "failed";
     const finishedAtMs = isTerminal ? task.completed_at : undefined;
     const elapsedMs = isTerminal
       ? (task.completed_at ?? task.started_at) - task.started_at
@@ -171,10 +216,23 @@ export function getSidebarData(nowMs: number = Date.now()): SidebarData {
       mode,
       status,
       elapsedMs: Math.max(0, elapsedMs),
+      actions: {
+        inspect: true,
+        focus: status === "running",
+        enter: status === "running",
+        kill: false,
+        cancel: false,
+        "move-to-BG": false,
+      },
     };
 
     if (finishedAtMs !== undefined) {
       row.finishedAtMs = finishedAtMs;
+    }
+
+    row.lastSeenAtMs = lastSeenAtMs;
+    if (status === "stale" || status === "maybe-unknown") {
+      row.staleAgeMs = staleAgeMs;
     }
 
     return row;

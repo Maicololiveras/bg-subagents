@@ -158,6 +158,21 @@ describe("getSidebarData() — single running task", () => {
     expect(data.tasks[0]!.mode).toBe("bg");
   });
 
+  it("accepts normalized background/foreground modes and agent/subagent_type fallbacks", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    spawnTask(registry, { subagent_type: "sdd-spec", mode: "background" });
+    spawnTask(registry, { agent: "sdd-verify", mode: "foreground" });
+
+    const data = getSidebarData();
+    const spec = data.tasks.find((row) => row.agentName === "sdd-spec")!;
+    const verify = data.tasks.find((row) => row.agentName === "sdd-verify")!;
+
+    expect(spec.mode).toBe("bg");
+    expect(verify.mode).toBe("fg");
+  });
+
   it("falls back to agentName='' when meta.agent_name is absent", () => {
     const registry = new TaskRegistry();
     registerFromServer(makeSharedState(registry));
@@ -176,6 +191,22 @@ describe("getSidebarData() — single running task", () => {
 
     const data = getSidebarData();
     expect(data.tasks[0]!.mode).toBe("bg");
+  });
+
+  it("defaults read-only actions enabled and side-effects disabled", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    spawnTask(registry, { agent_name: "sdd-explore", mode: "bg" });
+    const data = getSidebarData();
+    const row = data.tasks[0]!;
+
+    expect(row.actions?.inspect).toBe(true);
+    expect(row.actions?.focus).toBe(true);
+    expect(row.actions?.enter).toBe(true);
+    expect(row.actions?.kill).toBe(false);
+    expect(row.actions?.cancel).toBe(false);
+    expect(row.actions?.["move-to-BG"]).toBe(false);
   });
 });
 
@@ -263,6 +294,58 @@ describe("getSidebarData() — status mapping", () => {
     const data = getSidebarData();
     const row = data.tasks[0]!;
     expect(row.status).toBe("failed");
+  });
+
+  it("projects stale when running task exceeds default 10-minute inactivity threshold", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    const startedAt = Date.now();
+    spawnTask(registry, { agent_name: "sdd-apply", mode: "bg" });
+
+    const data = getSidebarData(startedAt + 10 * 60 * 1000 + 1);
+    const row = data.tasks[0]!;
+    expect(row.status).toBe("stale");
+    expect(row.lastSeenAtMs).toBe(startedAt);
+  });
+
+  it("terminal evidence overrides stale projection for completed tasks", async () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    vi.setSystemTime(0);
+    const handle = registry.spawn({
+      meta: { agent_name: "sdd-verify", mode: "bg" },
+      run: () => Promise.resolve("done"),
+    });
+    await handle.done;
+
+    const data = getSidebarData(11 * 60 * 1000);
+    expect(data.tasks[0]!.status).toBe("done");
+  });
+
+  it("delivery evidence overrides stale projection for non-terminal running tasks", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    const startedAt = Date.now();
+    const { id } = spawnTask(registry, { agent_name: "sdd-tasks", mode: "bg" });
+    registry.markDelivered(id);
+
+    const data = getSidebarData(startedAt + 12 * 60 * 1000);
+    expect(data.tasks[0]!.status).toBe("done");
+  });
+
+  it("does not silently delete stale entries from sidebar projection", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    const startedAt = Date.now();
+    spawnTask(registry, { agent_name: "sdd-archive", mode: "bg" });
+
+    const data = getSidebarData(startedAt + 15 * 60 * 1000);
+    expect(data.tasks).toHaveLength(1);
+    expect(data.tasks[0]!.status).toBe("stale");
   });
 });
 
@@ -501,5 +584,60 @@ describe("getSidebarData() — zero stdout pollution", () => {
     buildSidebarSlotPlugin({ pollIntervalMs: 500 });
 
     expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("getSidebarData() — stale freshness projection", () => {
+  it("projects running task as stale after default 10-minute threshold", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    const startedAt = Date.now();
+    spawnTask(registry, { agent_name: "sdd-explore", mode: "bg" });
+
+    const data = getSidebarData(startedAt + 10 * 60 * 1000 + 1);
+    expect(data.tasks[0]!.status).toBe("stale");
+    expect(data.tasks[0]!.lastSeenAtMs).toBe(startedAt);
+  });
+
+  it("terminal evidence overrides stale classification", async () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    vi.setSystemTime(0);
+    const handle = registry.spawn({
+      meta: { agent_name: "sdd-apply", mode: "bg" },
+      run: () => Promise.resolve("ok"),
+    });
+
+    vi.setSystemTime(1_000);
+    await handle.done;
+
+    const data = getSidebarData(20 * 60 * 1000);
+    expect(data.tasks[0]!.status).toBe("done");
+  });
+
+  it("delivered evidence overrides stale classification", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    const startedAt = Date.now();
+    const { id } = spawnTask(registry, { agent_name: "sdd-verify", mode: "bg" });
+    registry.markDelivered(id);
+
+    const data = getSidebarData(startedAt + 11 * 60 * 1000);
+    expect(data.tasks[0]!.status).toBe("done");
+  });
+
+  it("does not silently delete stale rows", () => {
+    const registry = new TaskRegistry();
+    registerFromServer(makeSharedState(registry));
+
+    const startedAt = Date.now();
+    spawnTask(registry, { agent_name: "sdd-explore", mode: "bg" });
+
+    const data = getSidebarData(startedAt + 11 * 60 * 1000);
+    expect(data.tasks).toHaveLength(1);
+    expect(data.tasks[0]!.status).toBe("stale");
   });
 });

@@ -18,7 +18,7 @@
  */
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { homedir } from "node:os";
 
 export type Mode = "bg" | "fg" | "default";

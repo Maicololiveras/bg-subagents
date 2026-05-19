@@ -32,6 +32,8 @@ describe("TaskRegistry / spawn + get + list", () => {
       run: async () => 42,
     });
     expect(isValidTaskId(handle.id)).toBe(true);
+    const state = registry.get(handle.id);
+    expect(state?.updated_at).toBe(state?.started_at);
     await expect(handle.done).resolves.toBe(42);
   });
 
@@ -48,7 +50,9 @@ describe("TaskRegistry / spawn + get + list", () => {
 
   it("get returns TaskState by id; undefined when unknown", () => {
     const handle = registry.spawn({ run: async () => "x" });
-    expect(registry.get(handle.id)?.status).toBe("running");
+    const state = registry.get(handle.id);
+    expect(state?.status).toBe("running");
+    expect(state?.updated_at).toBe(state?.started_at);
     expect(registry.get(unsafeTaskId("tsk_UnknownUnkno"))).toBeUndefined();
   });
 
@@ -61,6 +65,7 @@ describe("TaskRegistry / spawn + get + list", () => {
     expect(new Set(all.map((t) => t.id))).toEqual(new Set([a.id, b.id]));
     const completed = registry.list({ status: "completed" });
     expect(completed.length).toBe(2);
+    expect(completed.every((task) => task.updated_at >= task.started_at)).toBe(true);
     const running = registry.list({ status: "running" });
     expect(running.length).toBe(0);
   });
@@ -123,6 +128,28 @@ describe("TaskRegistry / events", () => {
     unsub();
   });
 
+  it("refreshes updated_at when progress is emitted", async () => {
+    let releaseProgress!: () => void;
+    const progressGate = new Promise<void>((resolve) => {
+      releaseProgress = resolve;
+    });
+    const handle = registry.spawn({
+      run: async (_signal, progress) => {
+        await progressGate;
+        progress("step");
+        return "done";
+      },
+    });
+    const startedAt = registry.get(handle.id)?.updated_at;
+    await sleep(5);
+    releaseProgress();
+    await handle.done;
+    const afterProgress = registry.get(handle.id)?.updated_at;
+    expect(afterProgress).toBeDefined();
+    expect(startedAt).toBeDefined();
+    expect(afterProgress).toBeGreaterThan(startedAt!);
+  });
+
   it("catches unhandled rejection → emits CompletionEvent with status=error + message/stack", async () => {
     const events: CompletionEvent[] = [];
     registry.onComplete((e) => events.push(e));
@@ -170,13 +197,49 @@ describe("TaskRegistry / kill + cancellation", () => {
       },
     });
     // Let the run callback register its abort listener before killing.
+    const startedAt = registry.get(handle.id)?.updated_at;
     await sleep(5);
     await registry.kill(handle.id);
     await expect(handle.done).rejects.toThrow();
     expect(aborted).toBe(true);
-    expect(registry.get(handle.id)?.status).toBe("killed");
+    const state = registry.get(handle.id);
+    expect(state?.status).toBe("killed");
+    expect(state?.updated_at).toBe(state?.completed_at);
+    expect(state?.updated_at).toBeGreaterThanOrEqual(startedAt!);
     expect(events.length).toBe(1);
     expect(events[0]?.status).toBe("killed");
+  });
+});
+
+describe("TaskRegistry / updated_at terminal refresh", () => {
+  it("refreshes updated_at on success", async () => {
+    const registry = new TaskRegistry();
+    const handle = registry.spawn({ run: async () => "ok" });
+    const startedAt = registry.get(handle.id)?.updated_at;
+    await handle.done;
+
+    const state = registry.get(handle.id);
+    expect(state?.status).toBe("completed");
+    expect(state?.updated_at).toBe(state?.completed_at);
+    expect(state?.updated_at).toBeGreaterThanOrEqual(startedAt!);
+    registry.disposeAll();
+  });
+
+  it("refreshes updated_at on error", async () => {
+    const registry = new TaskRegistry();
+    const handle = registry.spawn({
+      run: async () => {
+        throw new Error("boom");
+      },
+    });
+    const startedAt = registry.get(handle.id)?.updated_at;
+    await expect(handle.done).rejects.toThrow("boom");
+
+    const state = registry.get(handle.id);
+    expect(state?.status).toBe("error");
+    expect(state?.updated_at).toBe(state?.completed_at);
+    expect(state?.updated_at).toBeGreaterThanOrEqual(startedAt!);
+    registry.disposeAll();
   });
 });
 

@@ -36,6 +36,24 @@ import { current } from "./shared-state.js";
 import type { SidebarTaskRow } from "./sidebar.js";
 import { getSidebarData } from "./sidebar.js";
 
+export type PluginCardAction = "inspect" | "focus" | "enter" | "kill" | "cancel" | "move-to-BG";
+
+export function isActionEnabledByPolicy(
+  row: SidebarTaskRow,
+  action: PluginCardAction,
+  allowSideEffects = false,
+): boolean {
+  const freshRunning = row.status === "running";
+
+  if ((action === "focus" || action === "move-to-BG") && !freshRunning) {
+    return false;
+  }
+
+  const sideEffect = action === "kill" || action === "cancel" || action === "move-to-BG";
+  if (sideEffect && !allowSideEffects) return false;
+  return row.actions?.[action] ?? (!sideEffect);
+}
+
 // ---------------------------------------------------------------------------
 // Logger — file-routed, zero stdout in production
 // ---------------------------------------------------------------------------
@@ -60,7 +78,9 @@ function formatTaskTitle(row: SidebarTaskRow): string {
   const mode = `[${row.mode}]`;
   const agent = row.agentName || row.id;
   const elapsed = Math.round(row.elapsedMs / 1000);
-  return `${mode} ${agent} (${row.status}, ${elapsed}s)`;
+  const canInspect = isActionEnabledByPolicy(row, "inspect");
+  const inspectBadge = canInspect ? "inspect" : "locked";
+  return `${mode} ${agent} (${row.status}, ${elapsed}s, ${inspectBadge})`;
 }
 
 /**
@@ -114,7 +134,9 @@ function focusBgTask(api: TuiPluginApi): void {
   }
 
   const { tasks } = getSidebarData();
-  const bgRunning = tasks.filter((t) => t.mode === "bg" && t.status === "running");
+  const bgRunning = tasks.filter(
+    (t) => t.mode === "bg" && t.status === "running" && isActionEnabledByPolicy(t, "focus"),
+  );
 
   if (bgRunning.length === 0) {
     logger.debug("focusBgTask: no BG tasks running");
@@ -140,7 +162,9 @@ function focusFgTask(api: TuiPluginApi): void {
   }
 
   const { tasks } = getSidebarData();
-  const fgRunning = tasks.filter((t) => t.mode === "fg" && t.status === "running");
+  const fgRunning = tasks.filter(
+    (t) => t.mode === "fg" && t.status === "running" && isActionEnabledByPolicy(t, "focus"),
+  );
 
   if (fgRunning.length === 0) {
     logger.debug("focusFgTask: no FG tasks running");
