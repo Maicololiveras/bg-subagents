@@ -36,7 +36,7 @@ import {
   subscribeToSessionEvents,
   type ActiveTask,
 } from "./events.js";
-import { moveTaskToBg, killTask, deliverBgResult } from "./actions.js";
+import { moveTaskToBg, killTask, deliverBgResult, projectedActionEnabled } from "./actions.js";
 import {
   markAutoFlipParent,
   shouldAutoFlipTask,
@@ -46,6 +46,17 @@ import {
   formatCodexStatusLines,
   type CodexStatusSnapshot,
 } from "./codex-status.js";
+import {
+  PROJECTED_STATUS_MARKER,
+  formatTaskCardLines,
+  formatTaskElapsed,
+} from "./task-ui.js";
+import { projectTaskActivityVms, projectTaskStatus } from "./activity-projection.js";
+import {
+  createOrchestratorActivityRegistry,
+  formatOrchestratorActivityLines,
+  subscribeToOrchestratorActivity,
+} from "./orchestrator-activity.js";
 
 const PLUGIN_ID = "bg-subagents-control-tui";
 const SIDEBAR_ORDER = 80;
@@ -62,18 +73,27 @@ const MODE_LABEL: Record<Mode, string> = {
 };
 
 const MODE_ICON: Record<Mode, string> = {
-  bg: "🟦",
-  fg: "🟧",
-  default: "⚪",
+  bg: "BG",
+  fg: "FG",
+  default: "DF",
 };
 
-const STATUS_ICON: Record<ActiveTask["status"], string> = {
-  running: "🔄",
-  done: "✓",
-  error: "✗",
-  cancelled: "⊘",
-  "bg-detached": "🟦",
+const MODE_COLOR: Record<Mode, string> = {
+  bg: "#38bdf8",
+  fg: "#fb923c",
+  default: "#a3a3a3",
 };
+
+const STATUS_COLOR: Record<ActiveTask["status"], string> = {
+  queued: "#a3a3a3",
+  running: "#f59e0b",
+  done: "#22c55e",
+  error: "#ef4444",
+  cancelled: "#a3a3a3",
+  "bg-detached": "#38bdf8",
+};
+
+const TASK_CARD_LIMIT = 8;
 
 // ---------------------------------------------------------------------------
 // Sidebar widget
@@ -83,6 +103,7 @@ interface WidgetProps {
   policies: () => Record<string, Mode>;
   activeTasks: () => readonly ActiveTask[];
   codexStatus: () => CodexStatusSnapshot | undefined;
+  orchestratorLines: () => readonly string[];
   onTaskRightClick: (task: ActiveTask) => void;
   sessionID?: string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -145,8 +166,8 @@ function SidebarWidget(props: WidgetProps) {
     return counts;
   });
 
-  const liveTasks = createMemo(() =>
-    props.activeTasks().filter((t) => t.status === "running"),
+  const taskCards = createMemo(() =>
+    props.activeTasks().slice(-TASK_CARD_LIMIT).reverse(),
   );
 
   // Token usage — read from api.state.session.messages(sessionID).
@@ -164,71 +185,84 @@ function SidebarWidget(props: WidgetProps) {
     }
   });
 
-  function elapsed(started: number): string {
-    // now() makes this reactive — re-renders every second via the tick signal.
-    const sec = Math.floor((now() - started) / 1000);
-    if (sec < 60) return `${sec}s`;
-    return `${Math.floor(sec / 60)}m${(sec % 60).toString().padStart(2, "0")}`;
-  }
-
   return (
     <box flexDirection="column" padding={1} borderStyle="single">
-      <text bold>⚙ bg-control</text>
+      <text bold fg="#e5e7eb">bg-control</text>
 
       {/* Active tasks (live tracking) — right-click for context menu */}
-      <Show when={liveTasks().length > 0}>
-        <text dim>── active (right-click) ──</text>
-        <For each={liveTasks()}>
-          {(task) => (
+      <Show when={taskCards().length > 0}>
+        <text dim>tasks - click/right-click</text>
+        <For each={taskCards()}>
+          {(task) => {
+            const lines = () => formatTaskCardLines(task, now());
+            const projected = () => projectTaskActivityVms([task])[0];
+            return (
             <box
+              flexDirection="column"
+              borderStyle="single"
+              paddingX={1}
               onMouseDown={(e: { button: number; preventDefault?: () => void }) => {
-                // Right button (2) opens context menu; left passes through.
-                if (e.button === 2) {
+                // Right button (2) opens context menu; left click is safe in the sidebar.
+                if (e.button === 2 || e.button === 0) {
                   e.preventDefault?.();
                   props.onTaskRightClick(task);
                 }
               }}
             >
               <text>
-                {STATUS_ICON[task.status]} {task.agent} {elapsed(task.started)}
+                <span fg={STATUS_COLOR[task.status]}>{PROJECTED_STATUS_MARKER[projected()?.status ?? task.status]}</span>{" "}
+                <span bold>{task.agent}</span>{" "}
+                <span dim>|</span>{" "}
+                <span fg={projected()?.box.badge === "BG" ? MODE_COLOR.bg : MODE_COLOR.fg}>{projected()?.box.badge}</span>{" "}
+                <span dim>| {lines().header.split(" | ").at(-1)}</span>
               </text>
+              <text dim>{lines().meta}</text>
+              <text dim>{projected()?.box.latestSignal ?? lines().latest}</text>
             </box>
-          )}
+            );
+          }}
+        </For>
+      </Show>
+
+      <Show when={props.orchestratorLines().length > 0}>
+        <text dim>orchestrator</text>
+        <For each={props.orchestratorLines()}>
+          {(line) => <text dim>{line}</text>}
         </For>
       </Show>
 
       {/* Policy summary */}
-      <text dim>── policy ──</text>
+      <text dim>policy</text>
       <box flexDirection="row" gap={1}>
-        <text>{MODE_ICON.bg} {policySummary().bg}</text>
-        <text>{MODE_ICON.fg} {policySummary().fg}</text>
-        <text>{MODE_ICON.default} {policySummary().default}</text>
+        <text><span fg={MODE_COLOR.bg}>{MODE_ICON.bg}</span> {policySummary().bg}</text>
+        <text><span fg={MODE_COLOR.fg}>{MODE_ICON.fg}</span> {policySummary().fg}</text>
+        <text><span fg={MODE_COLOR.default}>{MODE_ICON.default}</span> {policySummary().default}</text>
       </box>
 
       {/* Token usage — live, focused on output (what the model produced) */}
       <Show when={props.sessionID}>
-        <text dim>── tokens (out / in) ──</text>
+        <text dim>tokens (out / in)</text>
         <box flexDirection="row" gap={1}>
-          <text>↓ {formatTokens(tokenStats().output)}</text>
-          <text dim>↑ {formatTokens(tokenStats().input)}</text>
+          <text>out {formatTokens(tokenStats().output)}</text>
+          <text dim>in {formatTokens(tokenStats().input)}</text>
         </box>
         <Show when={tokenStats().reasoning > 0}>
-          <text dim>🧠 reasoning {formatTokens(tokenStats().reasoning)}</text>
+          <text dim>reasoning {formatTokens(tokenStats().reasoning)}</text>
         </Show>
         <Show when={tokenStats().cache_read + tokenStats().cache_write > 0}>
           <text dim>
-            💾 cache r:{formatTokens(tokenStats().cache_read)} w:{formatTokens(tokenStats().cache_write)}
+            cache r:{formatTokens(tokenStats().cache_read)} w:{formatTokens(tokenStats().cache_write)}
           </text>
         </Show>
       </Show>
 
       {/* Codex status — rendered from monitor snapshot only; never shells from UI render. */}
-      <text dim>── codex ──</text>
+      <text dim>codex</text>
       <For each={formatCodexStatusLines(props.codexStatus())}>
         {(line) => <text>{line}</text>}
       </For>
 
-      <text dim>↑ ctrl+p → "bg-control"</text>
+      <text dim>ctrl+p -&gt; "bg-control"</text>
     </box>
   );
 }
@@ -246,8 +280,9 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
   const fromFile = readPolicyFile();
   const initial: Record<string, Mode> = {};
   for (const agent of AGENTS) {
-    if (fromFile[agent.name]) {
-      initial[agent.name] = fromFile[agent.name];
+    const fileMode = fromFile[agent.name];
+    if (fileMode) {
+      initial[agent.name] = fileMode;
     } else {
       const stored = (api as { kv?: { get?: (key: string) => unknown } }).kv?.get?.(
         `${KV_KEY_PREFIX}.${agent.name}`,
@@ -271,6 +306,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
   // 2. Live task registry (Ctrl+M area)
   // ---------------------------------------------------------------------------
   const registry = createTaskRegistry();
+  const orchestratorActivity = createOrchestratorActivityRegistry();
 
   // Subscribe to OpenCode session events
   const actionLogger = {
@@ -359,6 +395,11 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
       }
     },
   });
+  const disposeOrchestratorActivity = subscribeToOrchestratorActivity({
+    api,
+    registry: orchestratorActivity,
+    taskRegistry: registry,
+  });
 
   // ---------------------------------------------------------------------------
   // 3. Policy setters (Ctrl+P actions)
@@ -378,7 +419,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
     api.ui?.toast?.({
       variant: "info",
       title: "bg-control",
-      message: `${agentName} → ${MODE_LABEL[mode]}`,
+      message: `${agentName} -> ${MODE_LABEL[mode]}`,
     });
   };
 
@@ -393,12 +434,12 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
   // ---------------------------------------------------------------------------
   const openPolicyEditor = () => {
     const dialog = (api.ui as { dialog?: { replace: (r: () => unknown, onClose?: () => void) => void; clear: () => void } }).dialog;
-    const DialogSelect = (api.ui as { DialogSelect?: <V>(p: unknown) => unknown }).DialogSelect;
+    const DialogSelect = (api.ui as { DialogSelect?: (p: unknown) => unknown }).DialogSelect;
     if (!dialog || !DialogSelect) {
       api.ui?.toast?.({
         variant: "warning",
         title: "bg-control",
-        message: "DialogSelect not available — fallback to command palette entries",
+        message: "DialogSelect not available - fallback to command palette entries",
       });
       return;
     }
@@ -407,13 +448,13 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
       const currentMode = policies()[agentName] ?? "default";
       logger.info("policy editor: opening mode step", { agentName, currentMode });
       const options = MODES.map((mode) => ({
-        title: `${currentMode === mode ? "✓ " : "  "}${MODE_ICON[mode]} ${MODE_LABEL[mode]}`,
+        title: `${currentMode === mode ? "* " : "  "}${MODE_ICON[mode]} ${MODE_LABEL[mode]}`,
         value: mode as string,
         description:
           mode === "bg"
-            ? "Auto-dispatch via task_bg — orchestrator never blocks"
+            ? "Auto-dispatch via task_bg - orchestrator never blocks"
             : mode === "fg"
-              ? "Block parent in task tool — synchronous result"
+              ? "Block parent in task tool - synchronous result"
               : "Use OpenCode default behavior (no policy override)",
       }));
 
@@ -446,7 +487,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
         return {
           title: `${MODE_ICON[mode]} ${agent.name}`,
           value: agent.name,
-          description: `${MODE_LABEL[mode]} · ${agent.description ?? agent.category}`,
+            description: `${MODE_LABEL[mode]} | ${agent.description ?? agent.category}`,
           category: agent.category,
         };
       });
@@ -454,7 +495,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
       dialog.replace(
         () =>
           DialogSelect({
-            title: "bg-control · Edit agent policy",
+            title: "bg-control | Edit agent policy",
             options,
             onSelect: (opt: { value: string }) => {
               logger.info("policy editor: agent picked", { agent: opt.value });
@@ -482,7 +523,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
   // ---------------------------------------------------------------------------
   const openTaskMenu = (task: ActiveTask) => {
     const dialog = (api.ui as { dialog?: { replace: (r: () => unknown, onClose?: () => void) => void; clear: () => void } }).dialog;
-    const DialogSelect = (api.ui as { DialogSelect?: <V>(p: unknown) => unknown }).DialogSelect;
+    const DialogSelect = (api.ui as { DialogSelect?: (p: unknown) => unknown }).DialogSelect;
     if (!dialog || !DialogSelect) {
       api.ui?.toast?.({
         variant: "warning",
@@ -493,34 +534,137 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
     }
 
     const ctx = { api, registry, logger: actionLogger };
-    const elapsedSec = Math.floor((Date.now() - task.started) / 1000);
-
     interface MenuAction {
-      action: "move-bg" | "kill" | "dismiss";
+      action: "view-details" | "move-bg" | "kill" | "dismiss" | "back" | "close";
       title: string;
       description: string;
     }
-    const actions: MenuAction[] = [];
 
-    if (task.status === "running") {
-      actions.push({
-        action: "move-bg",
-        title: "🟧→🟦  Move to Background",
-        description: "Abort + respawn so orchestrator unblocks immediately",
+    const taskActions = (): MenuAction[] => {
+      const next: MenuAction[] = [
+        {
+          action: "view-details",
+          title: "View details / Ver detalle",
+          description: "Open the compact task detail panel without dumping logs into chat",
+        },
+      ];
+
+      if (projectedActionEnabled(task, "move-to-BG")) {
+        next.push({
+          action: "move-bg",
+          title: "FG -> BG  Move to Background",
+          description: "Abort + respawn so orchestrator unblocks immediately",
+        });
+      }
+      if (projectedActionEnabled(task, "kill")) {
+        next.push({
+          action: "kill",
+          title: "X  Kill task",
+          description: "Abort the child session - no replacement",
+        });
+      }
+      const projectedStatus = projectTaskStatus(task);
+      const dismissTitle = (projectedStatus === "stale" || projectedStatus === "maybe-unknown")
+        ? "-  Dismiss stale card (does not abort)"
+        : "-  Dismiss from sidebar";
+      next.push({
+        action: "dismiss",
+        title: dismissTitle,
+        description: (projectedStatus === "stale" || projectedStatus === "maybe-unknown")
+          ? "Hide this warning row only (does not abort child execution)"
+          : "Remove this entry from the active list (does not abort)",
       });
-    }
-    if (task.status === "running" || task.status === "bg-detached") {
-      actions.push({
-        action: "kill",
-        title: "✗  Kill task",
-        description: "Abort the child session — no replacement",
+      return next;
+    };
+
+    const actions: MenuAction[] = [];
+    actions.push(...taskActions());
+
+    const runAction = (action: MenuAction["action"]) => {
+      dialog.clear();
+      if (action === "view-details") {
+        openTaskDetails();
+      } else if (action === "move-bg") {
+        const liveTask = registry.getTask(task.childSessionID) ?? task;
+        if (!projectedActionEnabled(liveTask, "move-to-BG")) {
+          api.ui?.toast?.({
+            variant: "warning",
+            title: "bg-control",
+            message: "Move to BG no longer available for this task state",
+          });
+          return;
+        }
+        void moveTaskToBg(ctx, liveTask).then((r) => {
+          if (!r.ok) {
+            api.ui?.toast?.({
+              variant: "error",
+              title: "bg-control",
+              message: `Move to BG failed: ${r.error}`,
+            });
+          }
+        });
+      } else if (action === "kill") {
+        const liveTask = registry.getTask(task.childSessionID) ?? task;
+        if (!projectedActionEnabled(liveTask, "kill")) {
+          api.ui?.toast?.({
+            variant: "warning",
+            title: "bg-control",
+            message: "Kill no longer available for this task state",
+          });
+          return;
+        }
+        void killTask(ctx, liveTask);
+      } else if (action === "dismiss") {
+        registry.removeTask(task.childSessionID);
+      }
+    };
+
+    const openTaskDetails = () => {
+      const detail = projectTaskActivityVms([task])[0]?.detail;
+      const detailOptions: MenuAction[] = (detail?.rows ?? []).map((row) => ({
+        action: "close",
+        title: row.label,
+        description: row.value,
+      }));
+      if (detail?.reference) {
+        detailOptions.push({
+          action: "close",
+          title: "Reference",
+          description: detail.reference,
+        });
+      }
+
+      detailOptions.push(...taskActions().filter((a) => a.action !== "view-details"));
+      detailOptions.push({
+        action: "back",
+        title: "Back / Volver",
+        description: "Return to task actions",
       });
-    }
-    actions.push({
-      action: "dismiss",
-      title: "⊘  Dismiss from sidebar",
-      description: "Remove this entry from the active list (does not abort)",
-    });
+
+      dialog.replace(
+        () =>
+          DialogSelect({
+            title: `bg-control | ${task.agent} details`,
+            options: detailOptions.map((a) => ({
+              title: a.title,
+              value: a.action,
+              description: a.description,
+            })),
+            onSelect: (opt: { value: string }) => {
+              if (opt.value === "back") {
+                openTaskMenu(task);
+              } else if (opt.value === "close") {
+                dialog.clear();
+              } else {
+                runAction(opt.value as MenuAction["action"]);
+              }
+            },
+          }),
+        () => {
+          logger.info("task details: closed (esc)");
+        },
+      );
+    };
 
     logger.info("task menu: opening", {
       agent: task.agent,
@@ -531,7 +675,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
     dialog.replace(
       () =>
         DialogSelect({
-          title: `${task.agent} · ${elapsedSec}s · ${task.status}`,
+          title: `${task.agent} | ${formatTaskElapsed(task)} | ${task.status}`,
           options: actions.map((a) => ({
             title: a.title,
             value: a.action,
@@ -542,22 +686,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
               agent: task.agent,
               action: opt.value,
             });
-            dialog.clear();
-            if (opt.value === "move-bg") {
-              void moveTaskToBg(ctx, task).then((r) => {
-                if (!r.ok) {
-                  api.ui?.toast?.({
-                    variant: "error",
-                    title: "bg-control",
-                    message: `Move to BG failed: ${r.error}`,
-                  });
-                }
-              });
-            } else if (opt.value === "kill") {
-              void killTask(ctx, task);
-            } else if (opt.value === "dismiss") {
-              registry.removeTask(task.childSessionID);
-            }
+            runAction(opt.value as MenuAction["action"]);
           },
         }),
       () => {
@@ -600,6 +729,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
             policies={policies}
             activeTasks={registry.tasks}
             codexStatus={codexStatus}
+            orchestratorLines={() => formatOrchestratorActivityLines(orchestratorActivity.snippets())}
             onTaskRightClick={openTaskMenu}
             sessionID={slotProps?.session_id}
             api={api}
@@ -628,52 +758,56 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
       const elapsedSec = Math.floor((Date.now() - task.started) / 1000);
       const desc = task.description ?? "Active subagent task";
 
-      cmds.push({
-        title: `🟧→🟦 Move "${task.agent}" to BG (${elapsedSec}s elapsed)`,
-        value: `bg-control.task.move-bg.${task.childSessionID}`,
-        description: `Abort and respawn in true background — orchestrator unblocks. ${desc}`,
-        category: "bg-control · ⚡ Active Tasks (Ctrl+M)",
-        onSelect: () => {
-          void moveTaskToBg(
-            { api, registry, logger: actionLogger },
-            task,
-          ).then((result) => {
-            if (!result.ok) {
-              api.ui?.toast?.({
-                variant: "error",
-                title: "bg-control",
-                message: `Move to BG failed: ${result.error}`,
-              });
-            }
-          });
-        },
-      });
+      if (projectedActionEnabled(task, "move-to-BG")) {
+        cmds.push({
+          title: `FG -> BG Move "${task.agent}" to BG (${elapsedSec}s elapsed)`,
+          value: `bg-control.task.move-bg.${task.childSessionID}`,
+          description: `Abort and respawn in true background - orchestrator unblocks. ${desc}`,
+          category: "bg-control / Active Tasks (Ctrl+M)",
+          onSelect: () => {
+            void moveTaskToBg(
+              { api, registry, logger: actionLogger },
+              task,
+            ).then((result) => {
+              if (!result.ok) {
+                api.ui?.toast?.({
+                  variant: "error",
+                  title: "bg-control",
+                  message: `Move to BG failed: ${result.error}`,
+                });
+              }
+            });
+          },
+        });
+      }
 
-      cmds.push({
-        title: `✗ Kill "${task.agent}" (${elapsedSec}s elapsed)`,
-        value: `bg-control.task.kill.${task.childSessionID}`,
-        description: `Abort the child session — no replacement. ${desc}`,
-        category: "bg-control · ⚡ Active Tasks (Ctrl+M)",
-        onSelect: () => {
-          void killTask({ api, registry, logger: actionLogger }, task);
-        },
-      });
+      if (projectedActionEnabled(task, "kill")) {
+        cmds.push({
+          title: `X Kill "${task.agent}" (${elapsedSec}s elapsed)`,
+          value: `bg-control.task.kill.${task.childSessionID}`,
+          description: `Abort the child session - no replacement. ${desc}`,
+          category: "bg-control / Active Tasks (Ctrl+M)",
+          onSelect: () => {
+            void killTask({ api, registry, logger: actionLogger }, task);
+          },
+        });
+      }
     }
 
     // Helper: open task list info if no tasks are running
     if (tasks.length === 0) {
       cmds.push({
-        title: "ℹ No active subagent tasks",
+        title: "No active subagent tasks",
         value: "bg-control.task.empty",
         description:
           "When the orchestrator delegates tasks, they will appear here for live management.",
-        category: "bg-control · ⚡ Active Tasks (Ctrl+M)",
+        category: "bg-control / Active Tasks (Ctrl+M)",
         onSelect: () => {
           api.ui?.toast?.({
             variant: "info",
             title: "bg-control",
             message:
-              "No active tasks — delegate via orchestrator first, then come back here",
+              "No active tasks - delegate via orchestrator first, then come back here",
           });
         },
       });
@@ -681,11 +815,11 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
 
     // === Policy Editor — single entry that opens DialogSelect cycle ===
     cmds.push({
-      title: "🎛  Edit agent policies… (interactive)",
+      title: "Edit agent policies... (interactive)",
       value: "bg-control.policy.edit",
       description:
-        "Open a 2-step dialog to set BG/FG/Default per agent — replaces 60+ palette entries with one filterable picker",
-      category: "bg-control · 🎛 Policy editor",
+        "Open a 2-step dialog to set BG/FG/Default per agent - replaces 60+ palette entries with one filterable picker",
+      category: "bg-control / Policy editor",
       keybind: "ctrl+shift+p",
       onSelect: () => openPolicyEditor(),
     });
@@ -694,10 +828,10 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
     for (const category of Object.keys(AGENTS_BY_CATEGORY)) {
       for (const mode of MODES) {
         cmds.push({
-          title: `${MODE_ICON[mode]} ALL ${category} → ${MODE_LABEL[mode]}`,
+          title: `${MODE_ICON[mode]} ALL ${category} -> ${MODE_LABEL[mode]}`,
           value: `bg-control.batch.${category}.${mode}`,
           description: `Apply ${mode} to all ${category} agents`,
-          category: "bg-control · Batch by category",
+          category: "bg-control / Batch by category",
           onSelect: () => {
             const targets = AGENTS_BY_CATEGORY[category] ?? [];
             const next = { ...policies() };
@@ -717,7 +851,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
             api.ui?.toast?.({
               variant: "success",
               title: "bg-control",
-              message: `${category} agents → ${MODE_LABEL[mode]}`,
+              message: `${category} agents -> ${MODE_LABEL[mode]}`,
             });
           },
         });
@@ -725,31 +859,31 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
     }
 
     cmds.push({
-      title: "🟦 ALL agents → BG",
+      title: "BG ALL agents -> BG",
       value: "bg-control.all.bg",
       description: "All agents run in background mode",
-      category: "bg-control · Global batch",
-      onSelect: () => applyToAll("bg", "All agents → BG"),
+      category: "bg-control / Global batch",
+      onSelect: () => applyToAll("bg", "All agents -> BG"),
     });
     cmds.push({
-      title: "🟧 ALL agents → FG",
+      title: "FG ALL agents -> FG",
       value: "bg-control.all.fg",
       description: "All agents run in foreground (blocking) mode",
-      category: "bg-control · Global batch",
-      onSelect: () => applyToAll("fg", "All agents → FG"),
+      category: "bg-control / Global batch",
+      onSelect: () => applyToAll("fg", "All agents -> FG"),
     });
     cmds.push({
-      title: "⚪ Reset ALL → Default",
+      title: "-- Reset ALL -> Default",
       value: "bg-control.reset",
       description: "Clear all policy overrides",
-      category: "bg-control · Global batch",
+      category: "bg-control / Global batch",
       onSelect: () => applyToAll("default", "All agents reset to default"),
     });
     cmds.push({
-      title: "📄 Show policy file path",
+      title: "Show policy file path",
       value: "bg-control.show-path",
       description: "Display the policy.jsonc path for manual edit",
-      category: "bg-control · Info",
+      category: "bg-control / Info",
       onSelect: () => {
         api.ui?.toast?.({
           variant: "info",
@@ -768,7 +902,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
       Object.keys(AGENTS_BY_CATEGORY).length * MODES.length +
       4 /* global batch + path */,
     dynamic_active_tasks: "computed at palette open",
-    policy_editor: "ctrl+shift+p · DialogSelect 2-step cycle",
+    policy_editor: "ctrl+shift+p / DialogSelect 2-step cycle",
   });
 
   // ---------------------------------------------------------------------------
@@ -777,6 +911,7 @@ const Tui: TuiPlugin = async (api: TuiPluginApi) => {
   api.lifecycle.onDispose(() => {
     codexStatusMonitor.stop();
     disposeEvents();
+    disposeOrchestratorActivity();
     commandDispose?.();
     logger.info("control-tui v0.6 disposed");
   });

@@ -10,9 +10,16 @@
  * structure that may change.
  */
 
-import type { TaskRegistry, TaskPolicyStore } from "@maicolextic/bg-subagents-core";
+import type { TaskRegistry } from "@maicolextic/bg-subagents-core";
 
 const SHARED_KEY = Symbol.for("@maicolextic/bg-subagents/shared");
+
+export interface TaskPolicyStore {
+  /** Returns current override for the session, or undefined if none. */
+  getSessionOverride(sessionID: string): "bg" | "fg" | undefined;
+  /** Set override. "default" clears any existing override. */
+  setSessionOverride(sessionID: string, mode: "bg" | "fg" | "default"): void;
+}
 
 export interface SharedPluginState {
   readonly registry: TaskRegistry;
